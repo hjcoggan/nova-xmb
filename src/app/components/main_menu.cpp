@@ -771,21 +771,45 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
             rows.push_back(panel_entry("Internet Browser","browser","theme/icon_browser.png"));
         menus.push_back(panel_menu("TV / Video Services",asset_directory/"icons/theme/icon_tv.png",std::move(rows)));
     }
-    if(!config::CONFIG.hidden_category("game")) {
-        std::vector<std::unique_ptr<menu::menu_entry>> rows;
-        for(const auto& game_app : menu::scan_game_manifests()) {
-            if(config::CONFIG.excludedApplications.contains(game_app.id)) {
-                continue;
+    {
+        // Console layout: split the ~/Games/*/game.json manifests by runtime
+        // into Console Games (emulation/retroarch), PC Games (native/fex/
+        // proton) and Android Games (android/waydroid) instead of the single
+        // desktop "Game" category.
+        const auto console_games_hidden=config::CONFIG.hidden_category("console-games");
+        const auto pc_games_hidden=config::CONFIG.hidden_category("pc-games");
+        const auto android_games_hidden=config::CONFIG.hidden_category("android-games");
+        std::vector<std::unique_ptr<menu::menu_entry>> console_rows;
+        std::vector<std::unique_ptr<menu::menu_entry>> pc_rows;
+        std::vector<std::unique_ptr<menu::menu_entry>> android_rows;
+        if(!console_games_hidden||!pc_games_hidden||!android_games_hidden) {
+            for(const auto& game_app : menu::scan_game_manifests()) {
+                if(config::CONFIG.excludedApplications.contains(game_app.id)) {
+                    continue;
+                }
+                const auto& runtime=game_app.runtime;
+                std::vector<std::unique_ptr<menu::menu_entry>>* rows=nullptr;
+                if(runtime=="emulation"||runtime=="retroarch") rows=&console_rows;
+                else if(runtime=="native"||runtime=="fex"||runtime=="proton") rows=&pc_rows;
+                else if(runtime=="android"||runtime=="waydroid") rows=&android_rows;
+                if(rows) {
+                    rows->push_back(menu::create_game_menu_entry(game_app, xmb, loader));
+                }
             }
-            rows.push_back(menu::create_game_menu_entry(game_app, xmb, loader));
         }
-        rows.push_back(panel_entry("Game Library", "games", "icon_category_game.png"));
-        rows.push_back(panel_entry("Emulation", "emulation", "icon_category_game.png"));
-        if constexpr(OPENXMB_ENABLE_DISC_MEDIA != 0)
-            rows.push_back(panel_entry("Disc Media", "discs", "icon_category_video.png"));
-        rows.push_back(make_simple<menu::applications_menu>("Installed Applications", asset_directory/"icons/icon_category_application.png", loader, xmb,loader,::menu::categoryFilter("Game")));
-        menus.push_back(panel_menu("Game",preferred_icon(asset_directory,"xmb_icon_005.png","icon_category_game.png"),std::move(rows)));
+        if(!console_games_hidden) {
+            menus.push_back(panel_menu("Console Games",preferred_icon(asset_directory,"xmb_icon_005.png","icon_category_game.png"),std::move(console_rows)));
+        }
+        if(!pc_games_hidden) {
+            menus.push_back(panel_menu("PC Games",asset_directory/"icons/icon_category_pc.png",std::move(pc_rows)));
+        }
+        if(!android_games_hidden) {
+            menus.push_back(panel_menu("Android Games",asset_directory/"icons/icon_category_android.png",std::move(android_rows)));
+        }
     }
+    if(config::CONFIG.console_mode()&&!config::CONFIG.hidden_category("applications"))
+    menus.push_back(make_simple<menu::applications_menu>("Applications"_(),
+        preferred_icon(asset_directory, "xmb_icon_008.png", "icon_category_application.png"), loader, xmb, loader));
     if(!config::CONFIG.hidden_category("network")) {
         std::vector<std::unique_ptr<menu::menu_entry>> rows;
         if constexpr(OPENXMB_ENABLE_BROWSER != 0)
