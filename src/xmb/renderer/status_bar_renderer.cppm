@@ -210,18 +210,19 @@ void draw_hand(auroreengine::gui_renderer &renderer,
 
 void draw_clock_face(auroreengine::gui_renderer &renderer,
                      const ContainedLayout &layout,
-                     const ClockHandAngles &angles, float x_offset,
+                     const ClockHandAngles &angles, float center_x,
+                     float center_y, float icon_radius, float x_offset,
                      float y_offset, float ring_width, float hand_width,
                      glm::vec4 color) {
-  const auto center_x = StatusBarMetrics::icon_center_x + x_offset;
-  const auto center_y = StatusBarMetrics::icon_center_y + y_offset;
-  draw_ring(renderer, layout, center_x, center_y,
-            StatusBarMetrics::icon_radius - ring_width * 0.5F - 0.6F,
+  const auto cx = center_x + x_offset;
+  const auto cy = center_y + y_offset;
+  draw_ring(renderer, layout, cx, cy,
+            icon_radius - ring_width * 0.5F - 0.6F,
             ring_width, color);
-  draw_hand(renderer, layout, center_x, center_y, angles.hour_radians,
-            StatusBarMetrics::icon_radius * 0.47F, hand_width, color);
-  draw_hand(renderer, layout, center_x, center_y, angles.minute_radians,
-            StatusBarMetrics::icon_radius * 0.69F, hand_width, color);
+  draw_hand(renderer, layout, cx, cy, angles.hour_radians,
+            icon_radius * 0.47F, hand_width, color);
+  draw_hand(renderer, layout, cx, cy, angles.minute_radians,
+            icon_radius * 0.69F, hand_width, color);
 }
 
 } // namespace
@@ -242,28 +243,50 @@ void StatusBarRenderer::render(auroreengine::gui_renderer &renderer,
   const std::string_view time_text=label.empty()?std::string_view(text_buffer.data(), text_size):label;
   const auto layout = make_layout(renderer);
 
-  renderer.draw_glass_frame(layout.x(StatusBarMetrics::frame_x),layout.y(StatusBarMetrics::frame_y),
-      layout.height(StatusBarMetrics::frame_width+4.0F),layout.height(StatusBarMetrics::frame_height),opacity);
-
   const auto text_scale =
-      layout.height(StatusBarMetrics::text_size * 2.5F);
+      layout.height(StatusBarMetrics::text_size * 2.2F);
   // Aurore's text measurement API consumes the pre-geometry half scale (the
   // draw path expands it in the font geometry stage). Measuring at the draw
   // scale double-counts width and shifted right-aligned text far to the left.
   const auto measured = renderer.measure_text(time_text, text_scale * 0.5F);
-  const auto text_x = layout.x(StatusBarMetrics::text_right_x) - measured.x;
-  const auto text_y = layout.y(StatusBarMetrics::text_top_y);
+  const auto ts = std::max(0.5F, renderer.text_scale);
+  const auto logical_text_w =
+      measured.x * layout.framebuffer_width / std::max(1.0F, layout.scale);
+  const auto logical_text_h = std::max(
+      StatusBarMetrics::text_size * ts * 0.88F,
+      measured.y * layout.framebuffer_height / std::max(1.0F, layout.scale));
+  const auto frame_height =
+      std::max(StatusBarMetrics::frame_height * 0.85F, logical_text_h + 10.0F);
+  const auto icon_radius =
+      StatusBarMetrics::icon_radius * std::max(1.0F, ts * 0.75F);
+  const auto icon_center_x =
+      StatusBarMetrics::logical_width - 18.0F - icon_radius;
+  const auto text_right_x = icon_center_x - icon_radius - 10.0F;
+  const auto frame_x = std::max(0.0F, text_right_x - logical_text_w - 16.0F);
+  const auto frame_x_norm = layout.x(frame_x);
+  const auto frame_y = StatusBarMetrics::frame_y;
+  const auto glass_w = std::max(0.1F, (1.0F - frame_x_norm) * 2.0F);
+  renderer.draw_glass_frame(frame_x_norm, layout.y(frame_y),
+      glass_w, layout.height(frame_height), opacity);
+
+  const auto text_x = layout.x(text_right_x) - measured.x;
+  const auto text_y =
+      layout.y(frame_y + (frame_height - logical_text_h) * 0.5F - 2.0F);
   renderer.draw_text(time_text, text_x, text_y + layout.height(1.0F),
                      text_scale, {0.0F, 0.0F, 0.0F, 0.5F * opacity});
   renderer.draw_text(time_text, text_x, text_y, text_scale,
                      {1.0F, 1.0F, 1.0F, 0.92F * opacity});
 
+  const auto icon_center_y = frame_y + frame_height * 0.5F;
   const auto angles = resolve_clock_hand_angles(time);
-  draw_clock_face(renderer, layout, angles, 0.0F, 2.0F, 2.6F, 4.0F,
+  draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
+                  icon_radius, 0.0F, 2.0F, 2.6F, 4.0F,
                   {0.0F, 0.0F, 0.0F, 0.55F * opacity});
-  draw_clock_face(renderer, layout, angles, 0.0F, 0.0F, 5.2F, 6.2F,
+  draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
+                  icon_radius, 0.0F, 0.0F, 5.2F, 6.2F,
                   {1.0F, 1.0F, 1.0F, 0.14F * opacity});
-  draw_clock_face(renderer, layout, angles, 0.0F, 0.0F, 2.6F, 4.0F,
+  draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
+                  icon_radius, 0.0F, 0.0F, 2.6F, 4.0F,
                   {1.0F, 1.0F, 1.0F, 0.96F * opacity});
 }
 
