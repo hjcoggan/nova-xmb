@@ -122,11 +122,19 @@ struct contained_layout {
 [[nodiscard]] contained_layout make_contained_layout(const auroreengine::gui_renderer& renderer) noexcept {
     const auto width = static_cast<double>(renderer.frame_size.width);
     const auto height = static_cast<double>(renderer.frame_size.height);
-    const auto scale = std::min(width / logical_width, height / logical_height);
+    const auto base_scale = height / logical_height;
+    const auto ui = config::CONFIG.ui_scale();
+    const auto scale = base_scale * ui;
+    const auto base_ox = (width - logical_width * base_scale) * 0.5;
+    const auto anchor_x = (width / std::max(1.0, height) < logical_width / logical_height)
+        ? (width * 0.28)
+        : (base_ox + kActiveCategoryX * base_scale);
+    constexpr double kZoomedCategoryCenterYFrac = 0.27;
+    const auto target_y = (ui > 1.0) ? (height * kZoomedCategoryCenterYFrac) : (kCategoryBaselineY * base_scale);
     return {
         .scale = scale,
-        .offset_x = (width - logical_width * scale) * 0.5,
-        .offset_y = (height - logical_height * scale) * 0.5,
+        .offset_x = anchor_x - kActiveCategoryX * scale,
+        .offset_y = target_y - (kCategoryBaselineY - (ui > 1.0 ? 10.0 : 0.0)) * scale,
         .framebuffer_width = width,
         .framebuffer_height = height,
     };
@@ -663,15 +671,15 @@ void draw_normalized_icon(
 
 [[nodiscard]] double item_slot_y(int index, int selected_index) noexcept {
     if(index == selected_index) {
-        return kItemFocusY;
+        return SettingsSceneMetrics::focus_y;
     }
     if(index < selected_index) {
         constexpr double item_above_base_y = 120.0;
         return item_above_base_y -
-            static_cast<double>(selected_index - index - 1) * kItemPitch;
+            static_cast<double>(selected_index - index - 1) * SettingsSceneMetrics::item_pitch;
     }
-    return kItemFocusY + kSelectedToNextPadding +
-        static_cast<double>(index - selected_index) * kItemPitch;
+    return SettingsSceneMetrics::focus_y + SettingsSceneMetrics::selected_to_next_padding +
+        static_cast<double>(index - selected_index) * SettingsSceneMetrics::item_pitch;
 }
 
 } // namespace
@@ -1549,7 +1557,7 @@ void main_menu::render(auroreengine::gui_renderer& renderer) {
     if((in_submenu_now&&current_submenu)||outgoing_media)render_submenu(renderer,now);
     if(in_submenu_now&&current_submenu)current_submenu->get_button_actions(buttons);
     if(in_submenu_now) {
-        xmb->render_controller_buttons(renderer, 0.5f, 0.9f, buttons);
+        xmb->render_controller_buttons(renderer, 0.5f, (config::CONFIG.ui_scale() > 1.0) ? 0.955f : 0.9f, buttons);
     }
 }
 
@@ -1637,11 +1645,18 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
         chrome_transition=from+(to-from)*p;
     }
 
+    const auto x_compress = std::clamp(
+        (static_cast<double>(renderer.frame_size.width) /
+         std::max(1.0, static_cast<double>(renderer.frame_size.height))) /
+            (logical_width / logical_height),
+        0.65, 1.0);
+    const auto category_spacing = kCategorySpacing * x_compress;
+
     for(std::size_t index = 0; index < menus.size(); ++index) {
         const auto active = static_cast<int>(index) == selected;
         const auto distance = std::abs(static_cast<int>(index) - selected);
         auto center_x = kActiveCategoryX +
-            (static_cast<double>(index) - visual_selection) * kCategorySpacing;
+            (static_cast<double>(index) - visual_selection) * category_spacing;
         auto center_y = kCategoryBaselineY + (active ? -10.0 : 0.0);
         auto extent = active ? kActiveCategoryIconExtent : kInactiveCategoryIconExtent;
         auto alpha = active ? 0.90 : 0.85;
@@ -1678,26 +1693,53 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
                                       double alpha_multiplier) {
         const auto eased = ease_out_cubic(transition);
         const auto count = static_cast<int>(menu.get_submenus_count());
+        constexpr double kZoomedSelectedItemYFrac = 0.50;
+        const auto focus_y_shift = (config::CONFIG.ui_scale() > 1.0)
+            ? (((layout.framebuffer_height * kZoomedSelectedItemYFrac - layout.offset_y) / layout.scale) - SettingsSceneMetrics::focus_y)
+            : 0.0;
         for(int index = 0; index < count; ++index) {
             const auto old_y = item_slot_y(index, previous_item);
             const auto new_y = item_slot_y(index, selected_item);
-            const auto center_y = old_y + (new_y - old_y) * eased;
+            const auto center_y = old_y + (new_y - old_y) * eased + focus_y_shift;
             if(center_y < -80.0 || center_y > logical_height + 80.0) {
                 continue;
             }
-
             const auto focused = index == selected_item;
-            const auto extent = focused ? kActiveItemIconExtent : kInactiveItemIconExtent;
-            const auto alpha = (focused ? kFocusAlpha : kInactiveItemAlpha) * alpha_multiplier;
+            const auto extent = focused ? SettingsSceneMetrics::focused_icon_extent : SettingsSceneMetrics::icon_extent;
+            if(layout.y(center_y - extent * 0.5) * layout.framebuffer_height < 16.0) {
+                continue;
+            }
+            const auto top_fade = (config::CONFIG.ui_scale() > 1.0)
+                ? std::clamp((center_y - (kCategoryBaselineY + 80.0)) / 90.0, 0.0, 1.0)
+                : 1.0;
+            const auto screen_bottom_y = layout.y(center_y + extent * 0.5) * layout.framebuffer_height;
+            const auto bottom_fade = (config::CONFIG.ui_scale() > 1.0)
+                ? std::clamp((layout.framebuffer_height * 0.89 - screen_bottom_y) / (layout.framebuffer_height * 0.06), 0.0, 1.0)
+                : 1.0;
+            const auto edge_fade = std::min(top_fade, bottom_fade);
+            if(edge_fade <= 0.001) {
+                continue;
+            }
+
+            const auto alpha = (focused ? kFocusAlpha : kInactiveItemAlpha) * alpha_multiplier * edge_fade;
             auto& entry = menu.get_submenu(static_cast<unsigned int>(index));
             draw_icon(renderer, entry.get_icon(), entry.get_glass_icon(), layout,
-                kItemIconX + x_shift, center_y, extent, alpha);
+                SettingsSceneMetrics::icon_center_x + x_shift, center_y, extent, alpha);
 
-            const auto label_size = focused ? kActiveItemLabelSize : kInactiveItemLabelSize;
+            const auto label_size = focused ? SettingsSceneMetrics::active_label_size : SettingsSceneMetrics::inactive_label_size;
             const auto text_value = focused ? 1.0f : 235.0f / 255.0f;
-            canvas.text(entry.get_name(),kItemLabelX+x_shift,center_y+(focused?3:11),label_size,
-                {text_value,text_value,text_value,static_cast<float>(alpha)},focused?xmb_canvas::pulse():0);
-            if(focused&&!entry.get_description().empty()) canvas.text(entry.get_description(),kItemLabelX+x_shift,center_y+32,22,{1,1,1,static_cast<float>(alpha*0.82)});
+            const float item_pulse = 0.8F + 0.4F * std::sin(static_cast<float>(seconds_from_time_point(now)) * 1.848F);
+            const auto label_px = static_cast<float>(layout.offset_x + (SettingsSceneMetrics::label_x + x_shift) * layout.scale);
+            const auto label_py = static_cast<float>(layout.offset_y + (center_y + (focused ? 3.0 : 11.0)) * layout.scale);
+            renderer.draw_text_pixels(entry.get_name(), label_px, label_py,
+                static_cast<float>(label_size * layout.scale),
+                {text_value, text_value, text_value, static_cast<float>(alpha)},
+                focused ? 0.72F : 0.7F, focused ? item_pulse : 0.0F);
+            if(focused&&!entry.get_description().empty())
+                renderer.draw_text_pixels(entry.get_description(), label_px,
+                    static_cast<float>(layout.offset_y + (center_y + 32.0) * layout.scale),
+                    static_cast<float>(SettingsSceneMetrics::description_size * layout.scale),
+                    {1, 1, 1, static_cast<float>(alpha * 0.82)}, 0.7F);
         }
     };
 
@@ -1707,7 +1749,7 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
     }
 
     if(selected != last_selected && category_linear < 1.0) {
-        const auto travel = static_cast<double>(selected - last_selected) * kCategorySpacing;
+        const auto travel = static_cast<double>(selected - last_selected) * category_spacing;
         const auto old_shift = -travel * category_eased;
         const auto new_shift = travel * (1.0 - category_eased);
         const auto old_alpha = std::max(0.0, 1.0 - category_eased / 0.4) * rail_alpha;
@@ -1783,14 +1825,20 @@ std::unique_ptr<main_menu::media_scene_state> main_menu::capture_media_scene(men
 }
 void main_menu::draw_media_scene(auroreengine::gui_renderer& renderer,const media_scene_state& state,double shift,double alpha,double parent_shift) {
     const auto layout=make_contained_layout(renderer);
-    for(const auto& entry:state.parents)draw_icon(renderer,*entry.icon,entry.glass,layout,entry.x+parent_shift,entry.y,openxmb::xmb::SettingsSceneMetrics::icon_extent,entry.alpha*alpha);
+    const auto focus_y_shift=(config::CONFIG.ui_scale()>1.0)?(((layout.framebuffer_height*0.50-layout.offset_y)/layout.scale)-515.0):0.0;
+    for(const auto& entry:state.parents) {
+        const auto py=entry.y+focus_y_shift;
+        const auto sy=layout.y(py+openxmb::xmb::SettingsSceneMetrics::icon_extent*0.5)*layout.framebuffer_height;
+        if(sy>layout.framebuffer_height*0.89||layout.y(py-openxmb::xmb::SettingsSceneMetrics::icon_extent*0.5)*layout.framebuffer_height<16.0) continue;
+        draw_icon(renderer,*entry.icon,entry.glass,layout,entry.x+parent_shift,py,openxmb::xmb::SettingsSceneMetrics::icon_extent,entry.alpha*alpha);
+    }
     auto snapshot=state.snapshot;
     for(std::size_t i=0;i<snapshot.row_count;++i) {
         auto& row=snapshot.rows[i];row.icon_center_x+=shift;row.label_x+=shift;row.description_x+=shift;
         row.alpha*=alpha;row.value_alpha*=alpha;row.description_alpha*=alpha;
     }
     settings_scene_renderer.render(renderer,snapshot,state.icons,{.glass_icons=config::CONFIG.iconGlassRefraction});
-    if(state.empty)xmb_canvas(renderer).text("This folder is empty.",683+static_cast<float>(shift),515,34,{1,1,1,static_cast<float>(alpha)});
+    if(state.empty)xmb_canvas(renderer).text("This folder is empty.",683+static_cast<float>(shift),515+static_cast<float>(focus_y_shift),34,{1,1,1,static_cast<float>(alpha)});
 }
 void main_menu::render_submenu(auroreengine::gui_renderer& renderer,time_point now) {
     const auto raw=config::CONFIG.enabled("power.reduced.motion",false)?1.0:progress(now,last_submenu_transition,transition_submenu_activate_duration);
@@ -1804,10 +1852,11 @@ void main_menu::render_submenu(auroreengine::gui_renderer& renderer,time_point n
     }
     const auto layout=make_contained_layout(renderer);
     const auto alpha=static_cast<float>(in_submenu?1.0:layers.outgoing_alpha);
+    const auto focus_y_shift=(config::CONFIG.ui_scale()>1.0)?(((layout.framebuffer_height*0.50-layout.offset_y)/layout.scale)-515.0):0.0;
     const std::array<auroreengine::simple_renderer::vertex_data,3> chevron{{
-        {{layout.x(430),layout.y(515)},{0.81F,0.81F,0.82F,alpha},{0,0.5F}},
-        {{layout.x(462),layout.y(500)},{0.81F,0.81F,0.82F,alpha},{1,0}},
-        {{layout.x(462),layout.y(530)},{0.47F,0.47F,0.49F,alpha},{1,1}}}};
+        {{layout.x(430),layout.y(515+focus_y_shift)},{0.81F,0.81F,0.82F,alpha},{0,0.5F}},
+        {{layout.x(462),layout.y(500+focus_y_shift)},{0.81F,0.81F,0.82F,alpha},{1,0}},
+        {{layout.x(462),layout.y(530+focus_y_shift)},{0.47F,0.47F,0.49F,alpha},{1,1}}}};
     renderer.draw_generic(chevron);
 }
 

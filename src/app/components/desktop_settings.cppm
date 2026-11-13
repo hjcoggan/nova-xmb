@@ -100,6 +100,11 @@ export std::string value(const std::string& key,shell* host=nullptr) {
     }
     if(key=="language") return c.language;
     if(key=="text.scale") return std::to_string(c.textScale).substr(0,3);
+    if(key=="ui.scale") {
+        auto s = std::to_string(c.ui_scale());
+        if(s.find('.')!=std::string::npos) { while(s.back()=='0') s.pop_back(); if(s.back()=='.') s.push_back('0'); }
+        return s;
+    }
     if(key=="vsync") return c.preferredPresentMode==vk::PresentModeKHR::eFifoRelaxed?"On":"Off";
     if(key=="fps") return c.maxFPS>10000?"Unlimited":std::to_string(static_cast<int>(c.maxFPS));
     if(key=="samples") return std::to_string(static_cast<int>(c.sampleCount));

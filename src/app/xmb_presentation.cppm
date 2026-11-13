@@ -24,8 +24,15 @@ struct xmb_canvas {
     auroreengine::gui_renderer& renderer;
     float scale, ox, oy;
     explicit xmb_canvas(auroreengine::gui_renderer& r):renderer(r) {
-        scale=std::min(r.frame_size.width/1920.0f,r.frame_size.height/1080.0f);
-        ox=(r.frame_size.width-1920.0f*scale)*0.5f;oy=(r.frame_size.height-1080.0f*scale)*0.5f;
+        const float w=static_cast<float>(r.frame_size.width),h=static_cast<float>(r.frame_size.height);
+        const float base_scale=h/1080.0f;
+        const float ui=static_cast<float>(config::CONFIG.ui_scale());
+        scale=base_scale*ui;
+        const float base_ox=(w-1920.0f*base_scale)*0.5f;
+        const float anchor_x=(w/std::max(1.0f,h)<16.0f/9.0f)?(w*0.28f):(base_ox+566.0f*base_scale);
+        const float target_y=(ui>1.0f)?(h*0.27f):(289.0f*base_scale);
+        ox=anchor_x-566.0f*scale;
+        oy=target_y-((ui>1.0f)?279.0f:289.0f)*scale;
     }
     void text(std::string_view text,float x,float baseline,float size=28,glm::vec4 color=glm::vec4(1),float glow=0,bool centered=false) const {
         renderer.draw_text_pixels(text,ox+x*scale,oy+baseline*scale,size*scale*config::CONFIG.textScale,color,0.7f,glow,centered);

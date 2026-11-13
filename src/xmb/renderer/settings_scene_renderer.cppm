@@ -14,6 +14,7 @@ module;
 export module openxmb.xmb.settings_scene_renderer;
 
 import auroreengine;
+import openxmb.config;
 import openxmb.utils;
 import glm;
 
@@ -75,15 +76,19 @@ struct ContainedLayout {
 make_layout(const auroreengine::gui_renderer &renderer) noexcept {
   const auto width = static_cast<float>(renderer.frame_size.width);
   const auto height = static_cast<float>(renderer.frame_size.height);
-  const auto scale = static_cast<float>(std::min(
-      static_cast<double>(width) / SettingsSceneMetrics::logical_width,
-      static_cast<double>(height) / SettingsSceneMetrics::logical_height));
+  const auto base_scale = static_cast<double>(height) / SettingsSceneMetrics::logical_height;
+  const auto ui = config::CONFIG.ui_scale();
+  const auto scale = static_cast<float>(base_scale * ui);
+  const auto base_ox = (static_cast<double>(width) - SettingsSceneMetrics::logical_width * base_scale) * 0.5;
+  const auto anchor_x = (static_cast<double>(width) / std::max(1.0, static_cast<double>(height)) <
+                         SettingsSceneMetrics::logical_width / SettingsSceneMetrics::logical_height)
+      ? (static_cast<double>(width) * 0.28)
+      : (base_ox + 566.0 * base_scale);
+  const auto target_y = (ui > 1.0) ? (static_cast<double>(height) * 0.27) : (289.0 * base_scale);
   return {
       .scale = scale,
-      .offset_x = static_cast<float>(
-          (width - SettingsSceneMetrics::logical_width * scale) * 0.5),
-      .offset_y = static_cast<float>(
-          (height - SettingsSceneMetrics::logical_height * scale) * 0.5),
+      .offset_x = static_cast<float>(anchor_x - 566.0 * scale),
+      .offset_y = static_cast<float>(target_y - (ui > 1.0 ? 279.0 : 289.0) * scale),
       .framebuffer_width = width,
       .framebuffer_height = height,
   };
@@ -135,8 +140,14 @@ void draw_wrapped_description(auroreengine::gui_renderer &renderer,
     return;
 
   const auto size = layout.text_size(row.description_size);
+  const auto avail_w = std::max(
+      120.0,
+      static_cast<double>(layout.framebuffer_width) -
+          (layout.offset_x + row.description_x * layout.scale) -
+          48.0 * layout.scale);
   const auto max_width = static_cast<float>(
-      row.description_max_width * layout.scale / layout.framebuffer_width);
+      std::min(row.description_max_width * layout.scale, avail_w) /
+      layout.framebuffer_width);
   auto cursor = std::size_t{};
   auto line = std::size_t{};
   while (cursor < row.description.size() &&
@@ -189,10 +200,36 @@ void SettingsSceneRenderer::render(auroreengine::gui_renderer &renderer,
                                    std::span<const SettingsSceneIcon> icons,
                                    SettingsSceneRenderOptions options) const {
   const auto layout = make_layout(renderer);
+  const auto ui = config::CONFIG.ui_scale();
+  const auto focus_y_shift = (ui > 1.0)
+      ? (((layout.framebuffer_height * 0.50 - layout.offset_y) / layout.scale) -
+         SettingsSceneMetrics::focus_y)
+      : 0.0;
   for (std::size_t index = 0; index < snapshot.row_count; ++index) {
-    const auto &row = snapshot.rows[index];
+    auto row = snapshot.rows[index];
     if (row.alpha <= 0.001)
       continue;
+    row.center_y += focus_y_shift;
+    const auto screen_top_y =
+        layout.y(row.center_y - row.icon_extent * 0.5) * layout.framebuffer_height;
+    const auto screen_bottom_y =
+        layout.y(row.center_y + row.icon_extent * 0.5) * layout.framebuffer_height;
+    if (screen_top_y < 16.0)
+      continue;
+    const auto top_fade = (ui > 1.0)
+        ? std::clamp((row.center_y - (289.0 + 80.0)) / 90.0, 0.0, 1.0)
+        : 1.0;
+    const auto bottom_fade = (ui > 1.0)
+        ? std::clamp((layout.framebuffer_height * 0.89 - screen_bottom_y) /
+                         (layout.framebuffer_height * 0.06),
+                     0.0, 1.0)
+        : 1.0;
+    const auto edge_fade = std::min(top_fade, bottom_fade);
+    if (edge_fade <= 0.001)
+      continue;
+    row.alpha *= edge_fade;
+    row.value_alpha *= edge_fade;
+    row.description_alpha *= edge_fade;
 
     if (const auto *icon = find_icon(icons, row.icon_ref))
       draw_icon(renderer, layout, row, *icon, options.glass_icons);
@@ -215,8 +252,11 @@ void SettingsSceneRenderer::render(auroreengine::gui_renderer &renderer,
           row.focused
               ? glm::vec3(245.0F / 255.0F, 240.0F / 255.0F, 250.0F / 255.0F)
               : glm::vec3(235.0F / 255.0F);
+      const auto right_x = std::min(
+          static_cast<double>(layout.offset_x + row.value_right_x * layout.scale),
+          static_cast<double>(layout.framebuffer_width) - 48.0 * layout.scale);
       renderer.draw_text_pixels(row.value,
-          layout.offset_x+row.value_right_x*layout.scale-measured,
+          right_x - measured,
           layout.offset_y+(row.center_y+(row.focused?3.0:11.0))*layout.scale,size,
           glm::vec4(color, static_cast<float>(row.value_alpha)),0.7F);
     }

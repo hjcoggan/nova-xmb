@@ -182,6 +182,14 @@ export namespace config
                 const auto [end,error]=fast_float::from_chars(value.data(),value.data()+value.size(),result);
                 return error==std::errc{} && end==value.data()+value.size() && std::isfinite(result)?result:fallback;
             }
+            [[nodiscard]] double ui_scale() const {
+#ifdef OPENXMB_DEFAULT_UI_SCALE
+                constexpr double fallback = static_cast<double>(OPENXMB_DEFAULT_UI_SCALE);
+#else
+                constexpr double fallback = 1.0;
+#endif
+                return std::clamp(number("ui.scale", fallback), 0.5, 3.0);
+            }
             bool enabled(std::string_view key,bool fallback=true) const {
                 return preference(key,fallback?"On":"Off")=="On";
             }

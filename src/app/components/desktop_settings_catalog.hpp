@@ -41,6 +41,7 @@ inline const std::vector<Entry>& entries() {
         {"Display","display.monitor","Display","Move OpenXMB to a connected display."},
         {"Display","display.resolution","Resolution","Choose the fullscreen display resolution."},
         {"Display","text.scale","Interface Text Size","Scale text throughout OpenXMB.",{"0.8","1.0","1.2","1.4"}},
+        {"Display","ui.scale","Interface Scale","Scale icons, text, and layout together.",{"1.0","1.25","1.35","1.5","1.75","2.0"}},
         {"Display","display.brightness","Brightness","Adjust the OpenXMB scene brightness.",{"0.6","0.8","1.0","1.2"}},
         {"Display","vsync","VSync","Synchronise presentation to the display.",{"On","Off"}},
         {"Display","fps","Frame Limit","Maximum shell rendering rate.",{"30","60","120","144","240","Unlimited"}},

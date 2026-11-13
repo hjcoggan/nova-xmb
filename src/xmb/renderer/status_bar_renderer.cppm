@@ -62,15 +62,16 @@ struct ContainedLayout {
 make_layout(const auroreengine::gui_renderer &renderer) noexcept {
   const auto width = static_cast<float>(renderer.frame_size.width);
   const auto height = static_cast<float>(renderer.frame_size.height);
-  const auto scale =
-      std::min(width / StatusBarMetrics::logical_width,
-               height / StatusBarMetrics::logical_height);
+  const auto base_scale = height / StatusBarMetrics::logical_height;
+  const auto ui = static_cast<float>(config::CONFIG.ui_scale());
+  const auto scale = base_scale * ui;
+  const auto target_top =
+      (ui > 1.0F) ? (height * 0.015F)
+                  : (StatusBarMetrics::frame_y * base_scale);
   return {
       .scale = scale,
-      .offset_x =
-          (width - StatusBarMetrics::logical_width * scale) * 0.5F,
-      .offset_y =
-          (height - StatusBarMetrics::logical_height * scale) * 0.5F,
+      .offset_x = width - StatusBarMetrics::logical_width * scale,
+      .offset_y = target_top - StatusBarMetrics::frame_y * scale,
       .framebuffer_width = width,
       .framebuffer_height = height,
   };

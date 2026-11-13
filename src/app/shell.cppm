@@ -128,8 +128,9 @@ namespace app
             std::string get_button_label(action value) const { return button_labels[std::to_underlying(value)]; }
             void render_controller_buttons(gui_renderer& renderer, float x, float y, std::ranges::range auto buttons) {
                 const float fw=static_cast<float>(renderer.frame_size.width),fh=static_cast<float>(renderer.frame_size.height);
-                const float scale=std::min(fw/1920.0F,fh/1080.0F),height=34*scale,gap=12*scale,spacing=64*scale;
-                const float font=28*scale*static_cast<float>(config::CONFIG.textScale),key_font=19*scale;
+                const float ui=static_cast<float>(config::CONFIG.ui_scale());
+                const float scale=(fh/1080.0F)*ui,height=28.0F*scale,gap=10.0F*scale,spacing=52.0F*scale;
+                const float font=24.0F*scale,key_font=17.0F*scale;
                 const auto glyph_width=[&](action a){const auto& label=button_labels[std::to_underlying(a)];return label.empty()?height:std::max(height,renderer.text_width_pixels(label,key_font)+14*scale);};
                 float total=0;for(const auto& [a,text]:buttons)if(a!=action::none)total+=glyph_width(a)+gap+renderer.text_width_pixels(::openxmb::localization::shell_locale::translate(text),font)+spacing;
                 if(total>0)total-=spacing;float current=x*fw-total*0.5F;
