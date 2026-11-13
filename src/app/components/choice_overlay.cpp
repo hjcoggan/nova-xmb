@@ -174,7 +174,7 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
         selected = last_selection_index + (selected - last_selection_index) * p;
     }
 
-    xmb_canvas canvas(renderer);
+    overlay_canvas canvas(renderer);
     const float ui=config::CONFIG.textScale;
     const float pixels=28*canvas.scale*ui;
     const auto font=config::CONFIG.fontPath.string();
@@ -190,7 +190,12 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
             wrapped_choices.push_back(std::move(lines));
         }
     }
-    const float x=1340+(1-open_alpha)*12;
+    // Anchor the entry column to the panel's right edge on the real frame: the
+    // authored 1340..1677 column drifts off a cover-cropped panel, so walk the
+    // panel's screen right edge back through the canvas (357 and the 363 px
+    // clip width keep the stock 1697-relative layout on a 16:9 frame).
+    const float panel_edge_authored=(panel_right*static_cast<float>(renderer.frame_size.width)-canvas.ox)/canvas.scale;
+    const float x=panel_edge_authored-357.0F+(1-open_alpha)*12;
     float top=518-metrics.x;
     if(!top_action.empty()) {
         auto labels=dialog_text::wrap(top_action,available_width*canvas.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});
@@ -199,13 +204,13 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
         for(std::size_t i=0;i<labels.size();++i)canvas.text(labels[i],x,baseline+i*pitch,28,{1,1,1,0.9F*open_alpha});
         top=std::max(top,baseline+(labels.size()-1)*pitch+metrics.y+24*ui);
     }
-    const float bottom=1000,viewport=std::max(line_height,bottom-top);
+    const float bottom=std::min(1000.0F,canvas.visible_bottom()),viewport=std::max(line_height,bottom-top);
     const auto window=dialog_text::choice_window(row_heights,selection_index,viewport,first_visible);
     first_visible=window.first;
     selected_page_lines=dialog_text::line_capacity(viewport,pitch,line_height);
     selected_total_lines=wrapped_choices.empty()?0:wrapped_choices[selection_index].size();
     text_scroll_line=std::min(text_scroll_line,selected_total_lines>selected_page_lines?selected_total_lines-selected_page_lines:0);
-    renderer.set_clip((canvas.ox+1334*canvas.scale)/renderer.frame_size.width,
+    renderer.set_clip((canvas.ox+(x-6.0F)*canvas.scale)/renderer.frame_size.width,
         (canvas.oy+top*canvas.scale)/renderer.frame_size.height,
         363*canvas.scale/renderer.frame_size.width,viewport*canvas.scale/renderer.frame_size.height);
     float y=top+metrics.x;
@@ -226,8 +231,8 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
     }
     renderer.reset_clip();
     if(window.first)canvas.text("▲",x,top-12*ui,20,{1,1,1,open_alpha});
-    if(window.last<choices.size())canvas.text("▼",x,1034,20,{1,1,1,open_alpha});
-    if(selected_total_lines>selected_page_lines)canvas.text("← More text →",x,1064,16,{1,1,1,open_alpha});
+    if(window.last<choices.size())canvas.text("▼",x,std::min(1034.0F,canvas.visible_bottom()-34.0F),20,{1,1,1,open_alpha});
+    if(selected_total_lines>selected_page_lines)canvas.text("← More text →",x,std::min(1064.0F,canvas.visible_bottom()-8.0F),16,{1,1,1,open_alpha});
 }
 
 }

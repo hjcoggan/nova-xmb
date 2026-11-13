@@ -73,7 +73,7 @@ public:
         return result::success;
     }
     void render(auroreengine::gui_renderer& r,shell* shell) override {
-        xmb_canvas c(r);c.rect(0,0,1920,1080,{0,0,0,0.28F});
+        overlay_canvas c(r);c.rect(0,0,1920,1080,{0,0,0,0.28F});
         c.rect(0,199,1920,1,{1,1,1,0.75F});c.rect(0,879,1920,1,{1,1,1,0.75F});
         c.text("Change Binding",960,350,36,{1,1,1,1},0,true);
         c.text("Release the controls, then press a "+std::string(key_.starts_with("pad.")?"controller button":"keyboard key")+" for "+key_.substr(4),960,500,28,{1,1,1,1},0,true);

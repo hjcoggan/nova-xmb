@@ -69,6 +69,22 @@ struct xmb_canvas {
         return 0.7f+0.55f*(0.5f+0.5f*std::sin(t*1.848f));
     }
 };
+// Overlay canvas: dialogs, keyboards and choice panels author in the same
+// 1920x1080 space, but unlike the crossbar they are centred, not left-anchored.
+// The uniform scale cover-crops the authored canvas, so authored full-screen
+// layers cover the whole frame with no letterbox bands; overlays derive the
+// authored-coordinate window that is on screen from visible_left()/right().
+struct overlay_canvas : xmb_canvas {
+    explicit overlay_canvas(auroreengine::gui_renderer& r):xmb_canvas(r) {
+        const float w=static_cast<float>(r.frame_size.width),h=static_cast<float>(r.frame_size.height);
+        scale=std::min((h/1080.0f)*static_cast<float>(config::CONFIG.ui_scale()),w/1100.0f);
+        ox=(w-1920.0f*scale)*0.5f;oy=(h-1080.0f*scale)*0.5f;
+    }
+    [[nodiscard]] float visible_left() const {return -ox/scale;}
+    [[nodiscard]] float visible_right() const {return (static_cast<float>(renderer.frame_size.width)-ox)/scale;}
+    [[nodiscard]] float visible_top() const {return -oy/scale;}
+    [[nodiscard]] float visible_bottom() const {return (static_cast<float>(renderer.frame_size.height)-oy)/scale;}
+};
 class media_icons {
     struct item { std::unique_ptr<auroreengine::texture> image,normal;std::future<void> ready,normal_ready; };
     std::map<std::string,item,std::less<>> images;

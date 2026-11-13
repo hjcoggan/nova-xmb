@@ -69,20 +69,22 @@ namespace app {
         float settle = smooth01(age / 0.28f);
         renderer.push_color(glm::vec4(1.0f, 1.0f, 1.0f, settle));
 
-        xmb_canvas c(renderer);
+        overlay_canvas c(renderer);
         c.rect(0,0,1920,1080,{0,0,0,0.25F});
         c.rect(0,199,1920,680,{0,0,0,0.12F});
         c.rect(0,199,1920,1,{1,1,1,0.75F});c.rect(0,879,1920,1,{1,1,1,0.75F});
         const float ui=config::CONFIG.textScale;
         const float pixels=24*c.scale*ui;
+        const float content_width=std::min(1150.0f,c.visible_right()-c.visible_left()-120.0f);
+        const float choice_row_width=std::min(1320.0f,c.visible_right()-c.visible_left()-100.0f);
         const auto font=config::CONFIG.fontPath.string();
         if(wrapped_pixels!=pixels||wrapped_font!=font) {
             wrapped_pixels=pixels;wrapped_font=font;
-            title_lines=dialog_text::wrap(title,1150*c.scale,[&](auto v){return renderer.text_width_pixels(v,28*c.scale*ui);});
-            if(title_lines.size()>2) {title_lines.resize(2);title_lines.back()=dialog_text::ellipsize(title_lines.back()+"…",1150*c.scale,[&](auto v){return renderer.text_width_pixels(v,28*c.scale*ui);});}
-            body_lines=dialog_text::wrap(message,1150*c.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});
+            title_lines=dialog_text::wrap(title,content_width*c.scale,[&](auto v){return renderer.text_width_pixels(v,28*c.scale*ui);});
+            if(title_lines.size()>2) {title_lines.resize(2);title_lines.back()=dialog_text::ellipsize(title_lines.back()+"…",content_width*c.scale,[&](auto v){return renderer.text_width_pixels(v,28*c.scale*ui);});}
+            body_lines=dialog_text::wrap(message,content_width*c.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});
             choice_lines.clear();
-            const float width=1320*c.scale/std::max(std::size_t{1},choices.size())-40*c.scale;
+            const float width=choice_row_width*c.scale/std::max(std::size_t{1},choices.size())-40*c.scale;
             for(const auto& choice:choices) {
                 auto lines=dialog_text::wrap(choice,width,[&](auto v){return renderer.text_width_pixels(v,26*c.scale*ui);});
                 if(lines.size()>2){lines.resize(2);lines.back()=dialog_text::ellipsize(lines.back()+"…",width,[&](auto v){return renderer.text_width_pixels(v,26*c.scale*ui);});}
@@ -100,12 +102,14 @@ namespace app {
         scroll_line=std::min(scroll_line,line_count>visible_lines?line_count-visible_lines:0);
         for(std::size_t i=0;i<visible_lines&&i+scroll_line<line_count;++i)
             c.text(body_lines[i+scroll_line],960,page.body_first_baseline+i*page.body_pitch,24,{1,1,1,1},0,true);
-        const float column=1320.0F/std::max(std::size_t{1},choices.size());
+        const float column=choice_row_width/std::max(std::size_t{1},choices.size());
+        const float choice_start=960.0F-choice_row_width*0.5F;
         for(std::size_t i=0;i<choices.size();++i)for(std::size_t line=0;line<choice_lines[i].size();++line)
-            c.text(choice_lines[i][line],300+column*(i+0.5F),page.choice_first_baseline+line*(choice_metrics.x+choice_metrics.y+8*ui),26,{1,1,1,1},i==selected?xmb_canvas::pulse():0,true);
+            c.text(choice_lines[i][line],choice_start+column*(i+0.5F),page.choice_first_baseline+line*(choice_metrics.x+choice_metrics.y+8*ui),26,{1,1,1,1},i==selected?xmb_canvas::pulse():0,true);
         if(line_count>visible_lines) {
-            if(scroll_line)c.text("▲",1540,page.body_top+body_metrics.x,20);
-            if(scroll_line+visible_lines<line_count)c.text("▼",1540,page.body_bottom,20);
+            const float arrow_x=std::min(1540.0f,c.visible_right()-12.0f);
+            if(scroll_line)c.text("▲",arrow_x,page.body_top+body_metrics.x,20);
+            if(scroll_line+visible_lines<line_count)c.text("▼",arrow_x,page.body_bottom,20);
         }
         const auto previous_scale=renderer.text_scale;renderer.text_scale=1.0F;
         xmb->render_controller_buttons(renderer,0.5F,0.84F,std::array{
