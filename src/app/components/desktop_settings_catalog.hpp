@@ -74,7 +74,7 @@ inline const std::vector<Entry>& entries() {
         {"Photo","photo.repeat","Repeat Slideshow","Continue after the last photograph.",{"On","Off"}},
         {"Photo","photo.shuffle","Shuffle Slideshow","Randomise slideshow order.",{"Off","On"}},
         {"Photo","photo.fit","Default Screen Fit","How photographs fit on screen.",{"Fit","Fill"}},
-        {"Accessory","controller.type","Controller Prompts","Automatic detection or a preferred button style.",{"auto","playstation","xbox","keyboard","steam"}},
+        {"Accessory","controller.type","Controller Prompts","Automatic detection or a preferred button style.",{"auto","playstation","xbox","nintendo","keyboard","steam"}},
         {"Accessory","controller.rumble","Controller Vibration","Enable controller feedback.",{"On","Off"}},
         {"Accessory","controller.analog","Analog Navigation","Enable analog controller navigation.",{"On","Off"}},
         {"Accessory","input.repeat","Navigation Repeat","Delay between held directional inputs in milliseconds.",{"150","180","220","300"}},

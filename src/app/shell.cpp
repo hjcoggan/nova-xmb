@@ -1855,6 +1855,25 @@ namespace app
                 const auto artwork=input_bindings::xbox_artwork(code);
                 if(!artwork.empty()) {buttonTextures[i]=std::make_unique<texture>(device,allocator);loader->loadTexture(buttonTextures[i].get(),config::CONFIG.asset_directory/"icons/controller"/(std::string(artwork)+".png"));continue;}
             }
+            if(family=="nintendo") {
+                // Nintendo-layout text badges, matching the print on a Switch-style
+                // pad: south=A, east=B, west=Y, north=X, so a layout-correct pad shows
+                // the confirm glyph on its A button. No new artwork is required.
+                switch(code) {
+                    case 0:button_labels[i]="A";break;
+                    case 1:button_labels[i]="B";break;
+                    case 2:button_labels[i]="Y";break;
+                    case 3:button_labels[i]="X";break;
+                    case 4:button_labels[i]="-";break;
+                    case 6:button_labels[i]="+";break;
+                    case 7:button_labels[i]="L3";break;
+                    case 8:button_labels[i]="R3";break;
+                    case 9:button_labels[i]="L";break;
+                    case 10:button_labels[i]="R";break;
+                    default:button_labels[i]="Button "+std::to_string(code);
+                }
+                continue;
+            }
             if(index<0||family=="default") {
                 if(keyboard)button_labels[i]=SDL_GetScancodeName(static_cast<SDL_Scancode>(code));
                 else {switch(code){case 0:button_labels[i]="South";break;case 1:button_labels[i]="East";break;case 2:button_labels[i]="West";break;case 3:button_labels[i]="North";break;case 4:button_labels[i]=family=="playstation"?"Select":"View";break;case 6:button_labels[i]=family=="playstation"?"Start":"Menu";break;case 9:button_labels[i]=family=="playstation"?"L1":"LB";break;case 10:button_labels[i]=family=="playstation"?"R1":"RB";break;default:button_labels[i]="Button "+std::to_string(code);}}
@@ -1881,6 +1900,9 @@ namespace app
                 } else if(ctype == sdl::GameControllerTypeValues::XBOX360 ||
                           ctype == sdl::GameControllerTypeValues::XBOXONE) {
                     return "xbox";
+                } else if(ctype == sdl::GameControllerTypeValues::NINTENDO_SWITCH_PRO ||
+                          ctype == sdl::GameControllerTypeValues::NINTENDO_SWITCH_JOYCON_PAIR) {
+                    return "nintendo";
                 }
                 std::string_view name = sdl::GameControllerName(controller.get());
                 if(name == "Steam Virtual Gamepad" || name == "Steam Controller") {

@@ -591,6 +591,7 @@ namespace menu {
                     std::pair{"keyboard", "controllertype|Keyboard"_()},
                     std::pair{"playstation", "controllertype|PlayStation"_()},
                     std::pair{"xbox", "controllertype|Xbox"_()},
+                    std::pair{"nintendo", "controllertype|Nintendo"_()},
                     std::pair{"steam", "controllertype|Steam Controller / Steamdeck"_()},
                     std::pair{"ouya", "controllertype|Ouya"_()},
                 }),
