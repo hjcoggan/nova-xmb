@@ -160,6 +160,9 @@ export namespace config
             const std::filesystem::path& videos_path() const {return media_path(2,videosPath);}
 
             std::unordered_set<std::string> excludedApplications;
+            std::unordered_set<std::string> excludedCategories;
+            bool consoleMode = false;
+            bool hideEmptyCategories = false;
             bool hideLogin1Options = false;
             bool hidePowerOptions = false;
             bool autostart = false;
@@ -192,6 +195,15 @@ export namespace config
             }
             bool enabled(std::string_view key,bool fallback=true) const {
                 return preference(key,fallback?"On":"Off")=="On";
+            }
+            [[nodiscard]] bool hidden_category(std::string_view name) const {
+                return excludedCategories.contains(std::string(name));
+            }
+            [[nodiscard]] bool console_mode() const {
+                return consoleMode;
+            }
+            [[nodiscard]] bool hide_empty_categories() const {
+                return hideEmptyCategories;
             }
 
             std::filesystem::path resolve_icon(const std::filesystem::path& path) const;

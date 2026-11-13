@@ -668,6 +668,21 @@ void config::load_from_json() {
                     excludedApplications.insert(app.get<std::string>());
                 }
             }
+
+            if (shell.contains("console-mode")) {
+                consoleMode = shell["console-mode"].get<bool>();
+            }
+
+            if (shell.contains("hide-empty-categories")) {
+                hideEmptyCategories = shell["hide-empty-categories"].get<bool>();
+            }
+
+            if (shell.contains("excluded-categories")) {
+                excludedCategories.clear();
+                for (const auto& category : shell["excluded-categories"]) {
+                    excludedCategories.insert(category.get<std::string>());
+                }
+            }
         }
         
         preferences.clear();
@@ -810,6 +825,13 @@ void config::save_to_json() {
         config["shell"]["excluded-applications"] = nlohmann::json::array();
         for (const auto& app : excludedApplications) {
             config["shell"]["excluded-applications"].push_back(app);
+        }
+
+        config["shell"]["console-mode"] = consoleMode;
+        config["shell"]["hide-empty-categories"] = hideEmptyCategories;
+        config["shell"]["excluded-categories"] = nlohmann::json::array();
+        for (const auto& category : excludedCategories) {
+            config["shell"]["excluded-categories"].push_back(category);
         }
         
         // Theme/colour scheme
