@@ -48,6 +48,12 @@ class menu_entry {
         virtual const auroreengine::texture* get_glass_icon() const {
             return nullptr;
         }
+        virtual const auroreengine::texture* get_background() const {
+            return nullptr;
+        }
+        virtual bool has_custom_icon() const {
+            return false;
+        }
         virtual result activate(action action) {
             return result::unsupported;
         }
@@ -96,18 +102,36 @@ class simple : public T {
         const auroreengine::texture* get_glass_icon() const override {
             return glass_icon.get();
         }
+        const auroreengine::texture* get_background() const override {
+            return background_icon.get();
+        }
+        bool has_custom_icon() const override {
+            return custom_icon;
+        }
         auroreengine::texture& get_icon() {
             return icon;
+        }
+        void set_description(std::string value) {
+            description = std::move(value);
+        }
+        void set_custom_icon(bool value) {
+            custom_icon = value;
         }
         auroreengine::texture& emplace_glass_icon(auroreengine::texture&& texture) {
             glass_icon = std::make_unique<auroreengine::texture>(std::move(texture));
             return *glass_icon;
+        }
+        auroreengine::texture& emplace_background(auroreengine::texture&& texture) {
+            background_icon = std::make_unique<auroreengine::texture>(std::move(texture));
+            return *background_icon;
         }
     private:
         std::string name;
         std::string description;
         icon_type icon;
         std::unique_ptr<auroreengine::texture> glass_icon;
+        std::unique_ptr<auroreengine::texture> background_icon;
+        bool custom_icon = false;
 };
 
 template<typename T>

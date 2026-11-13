@@ -55,6 +55,14 @@ import openxmb.config;
 namespace utils {
 
     std::optional<std::filesystem::path> resolve_icon_from_json(const std::string& icon_name) {
+        if (!icon_name.empty()) {
+            std::error_code ec;
+            std::filesystem::path direct_path(icon_name);
+            if (std::filesystem::is_regular_file(direct_path, ec)) {
+                return direct_path;
+            }
+        }
+
         static std::once_flag iconInitFlag;
         static std::map<std::string, std::filesystem::path> iconCache;
         

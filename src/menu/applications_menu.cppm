@@ -44,15 +44,24 @@ struct app_info {
     std::string comment;
     std::string exec;
     std::string icon;
+    std::string background;
+    std::string runtime;
     std::string categories;
     std::filesystem::path desktop_file;
-    bool terminal;
-    bool hidden;
-    bool no_display;
+    bool terminal = false;
+    bool hidden = false;
+    bool no_display = false;
     
     app_info() = default;
     app_info(const std::filesystem::path& desktop_file);
 };
+
+std::vector<app_info> scan_game_manifests();
+std::unique_ptr<action_menu_entry> create_game_menu_entry(
+    const app_info& app,
+    app::shell* xmb,
+    auroreengine::resource_loader& loader
+);
 
 using AppFilter = std::function<bool(const app_info&)>;
 

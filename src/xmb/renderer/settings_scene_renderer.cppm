@@ -24,6 +24,7 @@ struct SettingsSceneIcon {
   std::string_view semantic_id;
   const auroreengine::texture *texture{};
   const auroreengine::texture *glass_texture{};
+  bool preserve_color{};
 };
 
 struct SettingsSceneRenderOptions {
@@ -110,6 +111,11 @@ void draw_icon(auroreengine::gui_renderer &renderer,
   const auto extent = layout.image_extent(row.icon_extent);
   const auto x = layout.x(row.icon_center_x - row.icon_extent * 0.5);
   const auto y = layout.y(row.center_y - row.icon_extent * 0.5);
+  if (icon.preserve_color && icon.texture != nullptr) {
+    renderer.draw_image_a(*icon.texture, x, y, extent, extent,
+                          glm::vec4(1.0F, 1.0F, 1.0F, static_cast<float>(row.alpha)));
+    return;
+  }
   const auto glass_alpha = row.focused
                                ? std::min(settings_focused_glass_alpha,
                                           row.alpha * settings_focused_glass_alpha)

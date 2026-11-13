@@ -183,7 +183,169 @@ std::vector<std::string> build_launch_args(const app_info& app)
     return args;
 }
 
+bool valid_game_manifest_id(std::string_view id)
+{
+    if(id.empty() || id == "." || id == "..") {
+        return false;
+    }
+    if(!std::isalnum(static_cast<unsigned char>(id.front()))) {
+        return false;
+    }
+    for(unsigned char ch : id) {
+        if(!(std::isalnum(ch) || ch == '.' || ch == '_' || ch == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::filesystem::path expand_manifest_path(const std::filesystem::path& base, std::string_view raw)
+{
+    if(raw.empty()) {
+        return {};
+    }
+    std::string value(raw);
+    if(value == "~" || value.starts_with("~/")) {
+        if(const char* home = std::getenv("HOME"); home && *home) {
+            value = std::string(home) + value.substr(1);
+        }
+    }
+    std::filesystem::path candidate(value);
+    if(!candidate.is_absolute()) {
+        candidate = base / candidate;
+    }
+    return candidate;
+}
+
+std::string resolve_manifest_asset(
+    const std::filesystem::path& base,
+    std::string_view explicit_rel,
+    std::initializer_list<const char*> defaults
+) {
+    std::error_code ec;
+    if(!explicit_rel.empty()) {
+        const auto candidate = expand_manifest_path(base, explicit_rel);
+        if(std::filesystem::is_regular_file(candidate, ec)) {
+            return candidate.string();
+        }
+    }
+    for(const char* name : defaults) {
+        const auto candidate = base / name;
+        if(std::filesystem::is_regular_file(candidate, ec)) {
+            return candidate.string();
+        }
+    }
+    return {};
+}
+
+bool manifest_has_valid_command(const nlohmann::json& json)
+{
+    auto it = json.find("command");
+    if(it == json.end()) {
+        return false;
+    }
+    if(it->is_string()) {
+        const auto s = it->get<std::string>();
+        return std::ranges::any_of(s, [](unsigned char c) { return !std::isspace(c); });
+    }
+    if(it->is_array() && !it->empty() && (*it)[0].is_string()) {
+        const auto s = (*it)[0].get<std::string>();
+        return std::ranges::any_of(s, [](unsigned char c) { return !std::isspace(c); });
+    }
+    return false;
+}
+
+std::optional<app_info> parse_game_manifest(const std::filesystem::path& manifest_path)
+{
+    std::error_code ec;
+    if(!std::filesystem::is_regular_file(manifest_path, ec)) {
+        return std::nullopt;
+    }
+    std::ifstream in(manifest_path);
+    if(!in) {
+        return std::nullopt;
+    }
+    const auto json = nlohmann::json::parse(in, nullptr, false);
+    if(!json.is_object() || !manifest_has_valid_command(json)) {
+        return std::nullopt;
+    }
+
+    const auto game_dir = manifest_path.parent_path();
+    const std::string game_id = json.value("id", game_dir.filename().string());
+    if(!valid_game_manifest_id(game_id)) {
+        return std::nullopt;
+    }
+
+    app_info app;
+    app.id = game_id;
+    app.name = json.value("title", app.id);
+    if(app.name.empty()) {
+        app.name = app.id;
+    }
+    app.runtime = json.value("runtime", std::string("native"));
+    app.comment = json.value("description", app.runtime);
+    app.exec = "nova-launch " + app.id;
+    app.icon = resolve_manifest_asset(
+        game_dir,
+        json.value("icon", std::string{}),
+        {"icon.png", "ICON0.PNG", "icon.jpg"}
+    );
+    app.background = resolve_manifest_asset(
+        game_dir,
+        json.value("background", std::string{}),
+        {"background.png", "PIC1.PNG", "background.jpg"}
+    );
+    app.categories = "Game;";
+    app.desktop_file = manifest_path;
+    app.terminal = false;
+    app.hidden = false;
+    app.no_display = false;
+    return app;
+}
+
 } // namespace
+
+std::vector<app_info> scan_game_manifests()
+{
+    std::vector<app_info> manifests;
+    std::unordered_set<std::string> seen_ids;
+    std::vector<std::filesystem::path> roots;
+
+    if(const char* env_dir = std::getenv("NOVA_GAMES_DIR"); env_dir && *env_dir) {
+        roots.emplace_back(env_dir);
+    }
+    if(const char* home = std::getenv("HOME"); home && *home) {
+        roots.push_back(std::filesystem::path(home) / "Games");
+    }
+
+    std::error_code ec;
+    for(const auto& root : roots) {
+        if(!std::filesystem::exists(root, ec)) {
+            continue;
+        }
+        for(std::filesystem::directory_iterator it(
+                root,
+                std::filesystem::directory_options::skip_permission_denied,
+                ec), end;
+            it != end;
+            it.increment(ec)) {
+            if(ec || !it->is_directory(ec)) {
+                continue;
+            }
+            const auto manifest_path = it->path() / "game.json";
+            if(auto parsed = parse_game_manifest(manifest_path)) {
+                if(seen_ids.insert(parsed->id).second) {
+                    manifests.push_back(std::move(*parsed));
+                }
+            }
+        }
+    }
+
+    std::ranges::sort(manifests, [](const app_info& a, const app_info& b) {
+        return a.name < b.name;
+    });
+    return manifests;
+}
 
 // Parse desktop file to extract application info
 app_info::app_info(const std::filesystem::path& desktop_file) {
@@ -276,10 +438,24 @@ applications_menu::applications_menu(std::string name, auroreengine::texture&& i
 
 std::unique_ptr<action_menu_entry> applications_menu::create_action_menu_entry(const app_info& app, bool hidden) {
     std::string icon_path;
-    if(auto r = utils::resolve_icon_from_json(app.icon)) {
+    bool custom_icon = false;
+    std::error_code ec;
+    if(!app.icon.empty() && std::filesystem::is_regular_file(app.icon, ec)) {
+        icon_path = app.icon;
+        custom_icon = true;
+    } else if(auto r = utils::resolve_icon_from_json(app.icon)) {
         icon_path = r->string();
+        custom_icon = true;
     } else {
-        spdlog::warn("Could not resolve icon for application: {}", app.name);
+        const auto fallback_name = app.categories.find("Game") != std::string::npos
+            ? "icon_category_game.png"
+            : "icon_category_application.png";
+        const auto fallback_path = config::CONFIG.asset_directory / "icons" / fallback_name;
+        if(std::filesystem::is_regular_file(fallback_path, ec)) {
+            icon_path = fallback_path.string();
+        } else {
+            spdlog::warn("Could not resolve icon for application: {}", app.name);
+        }
     }
 
     auroreengine::texture icon_texture(loader.getDevice(), loader.getAllocator());
@@ -288,9 +464,92 @@ std::unique_ptr<action_menu_entry> applications_menu::create_action_menu_entry(c
         name += " (hidden)"_();
     }
     auto entry = std::make_unique<action_menu_entry>(name, std::move(icon_texture),
-        std::function<result()>{}, [this, app](action a) { return activate_app(app, a); });
+        std::function<result()>{}, [this, app](action a) { return activate_app(app, a); },
+        app.comment);
+    entry->set_custom_icon(custom_icon);
     if(!icon_path.empty()) {
         loader.loadTexture(&entry->get_icon(), icon_path);
+    }
+    if(!app.background.empty() && std::filesystem::is_regular_file(app.background, ec)) {
+        auroreengine::texture bg_texture(loader.getDevice(), loader.getAllocator());
+        auto& bg_slot = entry->emplace_background(std::move(bg_texture));
+        loader.loadTexture(&bg_slot, app.background);
+    }
+    return entry;
+}
+
+std::unique_ptr<action_menu_entry> create_game_menu_entry(
+    const app_info& app,
+    app::shell* xmb,
+    auroreengine::resource_loader& loader
+) {
+    std::string icon_path;
+    bool custom_icon = false;
+    std::error_code ec;
+    if(!app.icon.empty() && std::filesystem::is_regular_file(app.icon, ec)) {
+        icon_path = app.icon;
+        custom_icon = true;
+    } else {
+        const auto fallback_path = config::CONFIG.asset_directory / "icons" / "icon_category_game.png";
+        if(std::filesystem::is_regular_file(fallback_path, ec)) {
+            icon_path = fallback_path.string();
+        }
+    }
+
+    auroreengine::texture icon_texture(loader.getDevice(), loader.getAllocator());
+    auto entry = std::make_unique<action_menu_entry>(
+        app.name,
+        std::move(icon_texture),
+        std::function<result()>{},
+        [xmb, app](action a) -> result {
+            if(a == action::ok) {
+                auto args = build_launch_args(app);
+                if(args.empty() || !launch_detached(args)) {
+                    spdlog::warn("Failed to launch game manifest: {} ({})", app.name, app.exec);
+                    return result::failure;
+                }
+                return result::success;
+            }
+            if(a == action::options && xmb != nullptr) {
+                xmb->emplace_overlay<app::choice_overlay>(
+                    std::vector{"Launch Game"_(), "View information"_()},
+                    0,
+                    [xmb, app](unsigned int index) -> result {
+                        if(index == 0) {
+                            auto args = build_launch_args(app);
+                            if(args.empty() || !launch_detached(args)) {
+                                return result::failure;
+                            }
+                            return result::close;
+                        }
+                        if(index == 1) {
+                            xmb->emplace_overlay<app::message_overlay>(
+                                "Game Information"_(),
+                                std::string("Title: ") + app.name + "\n" +
+                                std::string("ID: ") + app.id + "\n" +
+                                std::string("Runtime: ") + (app.runtime.empty() ? "native" : app.runtime) + "\n" +
+                                std::string("Command: ") + app.exec + "\n" +
+                                std::string("Manifest: ") + app.desktop_file.string()
+                            );
+                            return result::close;
+                        }
+                        return result::unsupported;
+                    }
+                );
+                return result::success;
+            }
+            return result::unsupported;
+        },
+        app.comment
+    );
+    entry->set_custom_icon(custom_icon);
+    if(!icon_path.empty()) {
+        loader.loadTexture(&entry->get_icon(), icon_path);
+    }
+    if(!app.background.empty() && std::filesystem::is_regular_file(app.background, ec)) {
+        auroreengine::texture bg_texture(loader.getDevice(), loader.getAllocator());
+        auto& bg_slot = entry->emplace_background(std::move(bg_texture));
+        loader.loadTexture(&bg_slot, app.background);
     }
     return entry;
 }
@@ -298,6 +557,12 @@ std::unique_ptr<action_menu_entry> applications_menu::create_action_menu_entry(c
 std::vector<app_info> applications_menu::scan_applications() {
     std::vector<app_info> app_list;
     std::unordered_set<std::string> seen_ids;
+
+    for(auto& game_app : scan_game_manifests()) {
+        if(seen_ids.insert(game_app.id).second) {
+            app_list.push_back(std::move(game_app));
+        }
+    }
     
     // Common desktop file locations
     std::vector<std::filesystem::path> search_paths = {

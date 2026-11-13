@@ -59,7 +59,7 @@ class main_menu : public action_receiver {
 
         void render_crossbar(auroreengine::gui_renderer& renderer, time_point now);
         void render_submenu(auroreengine::gui_renderer& renderer, time_point now);
-        struct parent_icon {const auroreengine::texture* icon;const auroreengine::texture* glass;double x,y,alpha;};
+        struct parent_icon {const auroreengine::texture* icon;const auroreengine::texture* glass;double x,y,alpha;bool custom=false;};
         struct media_scene_state {
             openxmb::xmb::Catalog catalog;
             openxmb::xmb::SettingsSceneSnapshot snapshot;

@@ -623,7 +623,8 @@ void draw_icon(
     double center_x,
     double center_y,
     double extent,
-    double alpha
+    double alpha,
+    bool custom_icon = false
 ) {
     if(alpha <= 0.001 || extent <= 0.0) {
         return;
@@ -633,6 +634,11 @@ void draw_icon(
     const auto y = layout.y(center_y - extent * 0.5);
     const auto width = layout.width(extent);
     const auto height = layout.height(extent);
+    if(custom_icon) {
+        renderer.draw_image_a(texture, x, y, width, height,
+            glm::vec4(1.0F, 1.0F, 1.0F, static_cast<float>(alpha)));
+        return;
+    }
     const auto tint =
         glm::vec4(utils::xmb_icon_colour(openxmb::xmb::wall_clock_now()),
             static_cast<float>(alpha * xmb_web_icon_glass_alpha));
@@ -740,6 +746,12 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
     }
     {
         std::vector<std::unique_ptr<menu::menu_entry>> rows;
+        for(const auto& game_app : menu::scan_game_manifests()) {
+            if(config::CONFIG.excludedApplications.contains(game_app.id)) {
+                continue;
+            }
+            rows.push_back(menu::create_game_menu_entry(game_app, xmb, loader));
+        }
         rows.push_back(panel_entry("Game Library", "games", "icon_category_game.png"));
         rows.push_back(panel_entry("Emulation", "emulation", "icon_category_game.png"));
         rows.push_back(panel_entry("Disc Media", "discs", "icon_category_video.png"));
@@ -1545,6 +1557,24 @@ void main_menu::render(auroreengine::gui_renderer& renderer) {
         : (in_submenu ? submenu_progress : 1.0 - submenu_progress);
     bool in_submenu_now = in_submenu || partial > 0.0;
 
+    if(!settings_category_active()) {
+        const auroreengine::texture* bg = nullptr;
+        if(in_submenu && current_submenu && current_submenu->get_submenus_count() > 0) {
+            const auto idx = std::min(current_submenu->get_selected_submenu(), current_submenu->get_submenus_count() - 1);
+            bg = current_submenu->get_submenu(idx).get_background();
+        } else if(selected >= 0 && static_cast<std::size_t>(selected) < menus.size() &&
+                  menus[static_cast<std::size_t>(selected)]->get_submenus_count() > 0) {
+            auto& cat_menu = *menus[static_cast<std::size_t>(selected)];
+            const auto idx = std::min(cat_menu.get_selected_submenu(), cat_menu.get_submenus_count() - 1);
+            bg = cat_menu.get_submenu(idx).get_background();
+        }
+        if(bg != nullptr && bg->loaded && bg->imageView) {
+            renderer.draw_image(bg->imageView.get(), 0.0f, 0.0f,
+                static_cast<float>(renderer.aspect_ratio), 1.0f,
+                {1.0f, 1.0f, 1.0f, 0.85f});
+        }
+    }
+
     if(settings_catalog)for(const auto& [id,node]:settings_catalog->nodes)if(node.action_id.starts_with("desktop."))settings_value_labels[id]=desktop_settings::display_value(node.action_id.substr(8),xmb);
     render_crossbar(renderer, now);
     if(settings_category_active()) {
@@ -1724,7 +1754,8 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
             const auto alpha = (focused ? kFocusAlpha : kInactiveItemAlpha) * alpha_multiplier * edge_fade;
             auto& entry = menu.get_submenu(static_cast<unsigned int>(index));
             draw_icon(renderer, entry.get_icon(), entry.get_glass_icon(), layout,
-                SettingsSceneMetrics::icon_center_x + x_shift, center_y, extent, alpha);
+                SettingsSceneMetrics::icon_center_x + x_shift, center_y, extent, alpha,
+                entry.has_custom_icon());
 
             const auto label_size = focused ? SettingsSceneMetrics::active_label_size : SettingsSceneMetrics::inactive_label_size;
             const auto text_value = focused ? 1.0f : 235.0f / 255.0f;
@@ -1806,7 +1837,7 @@ std::unique_ptr<main_menu::media_scene_state> main_menu::capture_media_scene(men
         node.kind=dynamic_cast<const menu::menu*>(&entry)?openxmb::xmb::NodeKind::menu:openxmb::xmb::NodeKind::media;
         presentation.strings[node.label_key]=entry.get_name();presentation.strings[node.description_key]=entry.get_description();
         root.children.push_back(node.id);const auto id=node.id;presentation.nodes.emplace(id,std::move(node));
-        const auto& stored=presentation.nodes.at(id);state->icons.push_back({stored.icon_ref,&entry.get_icon(),entry.get_glass_icon()});
+        const auto& stored=presentation.nodes.at(id);state->icons.push_back({stored.icon_ref,&entry.get_icon(),entry.get_glass_icon(),entry.has_custom_icon()});
     }
     presentation.nodes.emplace("category.settings.media",std::move(root));
     const openxmb::xmb::NavigationRoute route{openxmb::xmb::NavigationLayer::nested_menu,"category.settings.media",selected_item-first};
@@ -1819,7 +1850,7 @@ std::unique_ptr<main_menu::media_scene_state> main_menu::capture_media_scene(men
         const auto y=openxmb::xmb::SettingsSceneMetrics::focus_y+delta*settings_parent_spacing;
         if(y<-40||y>1120)continue;
         const auto& entry=parent->get_submenu(i);const auto alpha=delta==0?0.92:std::max(0.12,0.42-(std::abs(delta)-1)*0.05);
-        state->parents.push_back({&entry.get_icon(),entry.get_glass_icon(),delta==0?settings_parent_col_x:settings_sibling_col_x,y,alpha});
+        state->parents.push_back({&entry.get_icon(),entry.get_glass_icon(),delta==0?settings_parent_col_x:settings_sibling_col_x,y,alpha,entry.has_custom_icon()});
     }
     return state;
 }
@@ -1830,7 +1861,7 @@ void main_menu::draw_media_scene(auroreengine::gui_renderer& renderer,const medi
         const auto py=entry.y+focus_y_shift;
         const auto sy=layout.y(py+openxmb::xmb::SettingsSceneMetrics::icon_extent*0.5)*layout.framebuffer_height;
         if(sy>layout.framebuffer_height*0.89||layout.y(py-openxmb::xmb::SettingsSceneMetrics::icon_extent*0.5)*layout.framebuffer_height<16.0) continue;
-        draw_icon(renderer,*entry.icon,entry.glass,layout,entry.x+parent_shift,py,openxmb::xmb::SettingsSceneMetrics::icon_extent,entry.alpha*alpha);
+        draw_icon(renderer,*entry.icon,entry.glass,layout,entry.x+parent_shift,py,openxmb::xmb::SettingsSceneMetrics::icon_extent,entry.alpha*alpha,entry.custom);
     }
     auto snapshot=state.snapshot;
     for(std::size_t i=0;i<snapshot.row_count;++i) {

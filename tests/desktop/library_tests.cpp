@@ -97,6 +97,29 @@ void games(const fs::path &root) {
   bool blocked = false;
   try { (void)library.fetch_artwork(game.id); } catch (const std::runtime_error &) { blocked = true; }
   require(blocked && !library.artwork_provider_available(), "optional artwork requests require explicit provider/key configuration");
+
+  const auto nova_root = root / "nova_games";
+  const auto vt3_dir = nova_root / "vt3";
+  fs::create_directories(vt3_dir / "bin");
+  std::ofstream(vt3_dir / "bin" / "vt3") << "#!/bin/sh\nexit 0\n";
+  fs::permissions(vt3_dir / "bin" / "vt3", fs::perms::owner_exec | fs::perms::owner_read | fs::perms::owner_write);
+  std::ofstream(vt3_dir / "icon.png") << "PNG_ICON";
+  std::ofstream(vt3_dir / "background.png") << "PNG_BG";
+  nlohmann::json nova_manifest{
+    {"title", "Virtua Tennis 3"},
+    {"runtime", "native"},
+    {"command", nlohmann::json::array({"./bin/vt3", "--fullscreen"})},
+    {"workingDirectory", "~/Games/vt3"},
+    {"environment", {{"SDL_VIDEODRIVER", "wayland"}}}
+  };
+  std::ofstream(vt3_dir / "game.json") << nova_manifest;
+  library.remove_game_root(folder);
+  library.add_game_root(nova_root);
+  require(library.scan_games() == 1 && library.scan_games() == 0, "nova game.json manifest scanned without duplicating inner binaries");
+  const auto vt3 = library.games().front();
+  require(vt3.id == "vt3" && vt3.title == "Virtua Tennis 3" && vt3.platform == "native", "nova game.json id, title and runtime parsed");
+  require(vt3.executable == fs::path("nova-launch") && vt3.arguments == std::vector<std::string>{"vt3"}, "nova game.json launches via nova-launch <id>");
+  require(vt3.icon == fs::weakly_canonical(vt3_dir / "icon.png") && vt3.background == fs::weakly_canonical(vt3_dir / "background.png"), "nova game.json resolves default icon.png and background.png");
 }
 void arguments() {
   const std::vector<std::string> values{"", "a path with spaces", "literal;$(value)", "a\\b\"c", "é"};

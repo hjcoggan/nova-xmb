@@ -347,6 +347,50 @@ Game import_rpcs3_game(const fs::path &directory) {
   if (game.background.empty() && fs::is_regular_file(folder / "PIC0.PNG")) game.background = folder / "PIC0.PNG";
   return game;
 }
+Game import_nova_game(const fs::path &manifest_path) {
+  const auto raw = read(manifest_path);
+  if (!raw.is_object() || !raw.contains("command")) throw std::runtime_error("Invalid Nova game manifest");
+  const auto &cmd = raw.at("command");
+  const bool valid_cmd = (cmd.is_string() && !cmd.get<std::string>().empty()) ||
+                         (cmd.is_array() && !cmd.empty() && cmd[0].is_string() && !cmd[0].get<std::string>().empty());
+  if (!valid_cmd) throw std::runtime_error("Nova game manifest command must be non-empty");
+  const auto folder = fs::absolute(manifest_path.parent_path()).lexically_normal();
+  const auto game_id = raw.value("id", folder.filename().string());
+  valid_id(game_id);
+  Game g;
+  g.id = game_id;
+  g.title = raw.value("title", game_id);
+  g.platform = raw.value("runtime", std::string("native"));
+  g.description = raw.value("description", g.platform);
+  g.genre = raw.value("genre", g.platform);
+  g.category = raw.value("category", std::string("Game"));
+  g.executable = "nova-launch";
+  g.arguments = {game_id};
+  g.game_directory = folder;
+  const auto cwd = raw.value("workingDirectory", raw.value("working_directory", std::string{}));
+  if (cwd.empty()) g.working_directory = folder;
+  else {
+    std::string expanded = cwd;
+    if ((expanded == "~" || expanded.starts_with("~/")) && std::getenv("HOME"))
+      expanded = std::string(std::getenv("HOME")) + expanded.substr(1);
+    g.working_directory = fs::path(expanded).is_relative() ? (folder / expanded) : fs::path(expanded);
+  }
+  const auto resolve_media = [&](const char *field, std::initializer_list<const char *> defaults) -> fs::path {
+    const auto explicit_val = raw.value(field, std::string{});
+    if (!explicit_val.empty()) {
+      const auto p = fs::path(explicit_val).is_relative() ? (folder / explicit_val) : fs::path(explicit_val);
+      if (fs::is_regular_file(p)) return fs::weakly_canonical(p);
+    }
+    for (const auto *name : defaults) {
+      if (fs::is_regular_file(folder / name)) return fs::weakly_canonical(folder / name);
+    }
+    return {};
+  };
+  g.icon = resolve_media("icon", {"icon.png", "ICON0.PNG", "icon.jpg"});
+  g.background = resolve_media("background", {"background.png", "PIC1.PNG", "background.jpg"});
+  g.music = resolve_media("music", {"SND0.AT3", "preview.ogg", "preview.wav", "preview.mp3", "preview.flac"});
+  return g;
+}
 void launch_game(const Game &game) {
   if (game.executable.empty()) throw std::runtime_error("Set this game's executable before launching");
   std::vector<std::string> arguments{game.executable.string()};
@@ -488,13 +532,25 @@ std::size_t Library::scan_games() {
       if (it->is_symlink()) { it.disable_recursion_pending(); continue; }
       Game found;
       const auto path = it->path();
+      bool is_manifest = false;
+      bool keep_id = false;
       try {
         if (it->is_directory() && (fs::is_regular_file(path / "PARAM.SFO") || fs::is_regular_file(path / "PS3_GAME/PARAM.SFO"))) {
           found = import_rpcs3_game(path);
           it.disable_recursion_pending();
         } else if (path.filename() == "PARAM.SFO") found = import_rpcs3_game(path.parent_path());
-        else if (path.filename() == "openxmb-game.json" || path.filename().string().ends_with(".openxmb-game.json")) {
+        else if (it->is_directory() && fs::is_regular_file(path / "game.json")) {
+          found = import_nova_game(path / "game.json");
+          is_manifest = true;
+          keep_id = true;
+          it.disable_recursion_pending();
+        } else if (path.filename() == "game.json") {
+          found = import_nova_game(path);
+          is_manifest = true;
+          keep_id = true;
+        } else if (path.filename() == "openxmb-game.json" || path.filename().string().ends_with(".openxmb-game.json")) {
           found = game(read(path));
+          is_manifest = true;
           if (found.executable.is_relative()) found.executable = path.parent_path() / found.executable;
           for (auto *media : {&found.icon, &found.background, &found.preview, &found.music, &found.working_directory})
             if (!media->empty() && media->is_relative()) *media = path.parent_path() / *media;
@@ -504,8 +560,8 @@ std::size_t Library::scan_games() {
       } catch (const std::exception &) { continue; }
       if (found.title.empty() || found.executable.empty()) continue;
       const auto identity = found.executable.string() + '\n' + format_arguments(found.arguments);
-      if (paths.insert(identity).second) { found.id.clear(); save_game(std::move(found)); ++count; }
-      else if (path.filename() == "openxmb-game.json" || path.filename().string().ends_with(".openxmb-game.json")) {
+      if (paths.insert(identity).second) { if (!keep_id) found.id.clear(); save_game(std::move(found)); ++count; }
+      else if (is_manifest) {
         // A manifest carries richer metadata than the executable discovered in
         // the same directory. Retain play history and favorites when refreshing.
         for (const auto &saved : games()) if (saved.executable.string() + '\n' + format_arguments(saved.arguments) == identity) {

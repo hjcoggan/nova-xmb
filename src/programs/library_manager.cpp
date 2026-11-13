@@ -205,7 +205,21 @@ library_manager::library_manager(std::string section,
   else if (section == "account" || section == "network") page_ = Page::account;
   else if (section == "trophies") page_ = Page::trophies;
   root_page_ = page_;
-  attempt([&] { library_ = std::make_unique<desktop::Library>(); refresh(); });
+  attempt([&] {
+    library_ = std::make_unique<desktop::Library>();
+    if (page_ == Page::games && library_->game_roots().empty()) {
+      std::error_code ec;
+      if (const auto *nova_dir = std::getenv("NOVA_GAMES_DIR"); nova_dir && *nova_dir && fs::is_directory(nova_dir, ec)) {
+        library_->add_game_root(nova_dir);
+      } else if (const auto *home = std::getenv("HOME"); home && *home && fs::is_directory(fs::path(home) / "Games", ec)) {
+        library_->add_game_root(fs::path(home) / "Games");
+      }
+      if (!library_->game_roots().empty()) {
+        (void)library_->scan_games();
+      }
+    }
+    refresh();
+  });
 }
 library_manager::~library_manager() {
   preview_.reset();
