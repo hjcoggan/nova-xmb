@@ -80,6 +80,7 @@ import :startup_overlay;
 import :message_overlay;
 import :programs;
 import :theme_manager;
+import :menu_utils;
 import :integration_center;
 import :library_manager;
 import :about;
@@ -1912,9 +1913,10 @@ namespace app
                 if(wanted_device!=active_audio_device)set_audio_device(wanted_device);
             }
         }
-        const bool focused=win->config.headless||(SDL_GetWindowFlags(win->win.get())&SDL_WINDOW_INPUT_FOCUS)!=0;
+        const bool child_active=menu::has_active_child();
+        const bool focused=!child_active&&(win->config.headless||(SDL_GetWindowFlags(win->win.get())&SDL_WINDOW_INPUT_FOCUS)!=0);
         const auto cap=config::CONFIG.maxFPS>10000?0:config::CONFIG.maxFPS;
-        win->config.fpsLimit=focused?cap:config::CONFIG.number("power.background.fps",30);
+        win->config.fpsLimit=child_active?1.0:(focused?cap:config::CONFIG.number("power.background.fps",30));
         auto& player=openxmb::music::service();
         static bool focus_paused=false;
         if(!focused&&!config::CONFIG.enabled("audio.background")&&player.snapshot().status==openxmb::music::Status::playing) {player.pause();focus_paused=true;}
@@ -1929,7 +1931,7 @@ namespace app
         player.set_output_gain(static_cast<float>(config::CONFIG.number("audio.master",100)*config::CONFIG.number("audio.music",100)/10000.0));
         player.set_background_enabled(config::CONFIG.enabled("music.background"));
         player.tick();
-        if(background_only) {
+        if(background_only || child_active) {
             return;
         }
 
@@ -1998,6 +2000,7 @@ namespace app
     }
 
     void shell::dispatch(const event& event) {
+        if(menu::has_active_child()) return;
         if(event.action!=action::none||event.get<events::key_down>()||event.get<events::controller_button_down>()||event.get<events::mouse_move>()) last_activity=std::chrono::steady_clock::now();
         // A held dismissal must not auto-repeat into the revealed menu.
         if(startup_dismiss_button) {

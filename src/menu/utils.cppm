@@ -26,6 +26,7 @@ module;
 #include <openxmb/xmb/icon_resolver.hpp>
 
 #include <array>
+#include <atomic>
 #include <cstdlib>
 #include <cerrno>
 #include <cctype>
@@ -146,6 +147,13 @@ inline std::optional<std::filesystem::path> xmb_web_normal_map_for_icon(
     return openxmb::xmb::xmb_web_normal_map_for_icon(icon_path);
 }
 
+inline std::atomic<int> active_launched_children{0};
+
+[[nodiscard]] inline bool has_active_child() noexcept
+{
+    return active_launched_children.load(std::memory_order_relaxed) > 0;
+}
+
 inline bool launch_detached(const std::vector<std::string>& args)
 {
     if(args.empty() || args.front().empty()) {
@@ -164,15 +172,23 @@ inline bool launch_detached(const std::vector<std::string>& args)
     return pid != -1;
 #else
     pid_t pid{};
-    int rc = posix_spawnp(&pid, args.front().c_str(), nullptr, nullptr, argv.data(), environ);
+    posix_spawnattr_t attr{};
+    posix_spawnattr_init(&attr);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+    posix_spawnattr_setpgroup(&attr, 0);
+    active_launched_children.fetch_add(1, std::memory_order_relaxed);
+    int rc = posix_spawnp(&pid, args.front().c_str(), nullptr, &attr, argv.data(), environ);
+    posix_spawnattr_destroy(&attr);
     if(rc != 0) {
+        active_launched_children.fetch_sub(1, std::memory_order_relaxed);
         return false;
     }
 
     std::thread([pid]() {
         int status{};
-        while(waitpid(pid, &status, 0) == -1 && errno == EINTR) {
+        while(waitpid(-pid, &status, 0) == -1 && errno == EINTR) {
         }
+        active_launched_children.fetch_sub(1, std::memory_order_relaxed);
     }).detach();
     return true;
 #endif
