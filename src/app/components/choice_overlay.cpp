@@ -136,10 +136,14 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
         open_elapsed / std::chrono::duration<double>(open_duration), 0.0, 1.0);
     const auto open_alpha =
         static_cast<float>(open_linear * open_linear * (3.0 - 2.0 * open_linear));
+    overlay_canvas canvas(renderer);
     const float x_shift = (1.0F - open_alpha) * (12.0F / 1920.0F);
     constexpr float panel_native_alpha_scale = 0.90F;
-    constexpr float panel_left = 1324.0F / 1920.0F;
-    constexpr float panel_right = 1697.0F / 1920.0F;
+    constexpr float panel_right = 1860.0F / 1920.0F;
+    const float panel_edge_authored = (panel_right * static_cast<float>(renderer.frame_size.width) - canvas.ox) / canvas.scale;
+    const float x = panel_edge_authored - 357.0F + (1.0F - open_alpha) * 12.0F;
+    const float panel_left = (canvas.ox + (x - 16.0F) * canvas.scale) / static_cast<float>(renderer.frame_size.width);
+    const float panel_right_screen = (canvas.ox + (x + 357.0F) * canvas.scale) / static_cast<float>(renderer.frame_size.width);
     constexpr std::array<gradient_stop, 8> stops{{
         {0.000F, {178.0F / 255.0F, 170.0F / 255.0F, 194.0F / 255.0F, 0.00F}},
         {0.043F, {178.0F / 255.0F, 170.0F / 255.0F, 194.0F / 255.0F, 0.55F}},
@@ -151,8 +155,8 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
         {1.000F, {245.0F / 255.0F, 244.0F / 255.0F, 247.0F / 255.0F, 0.00F}},
     }}; 
     for(std::size_t i = 0; i + 1 < stops.size(); ++i) {
-        const float x0 = panel_left + x_shift + (panel_right - panel_left) * stops[i].position;
-        const float x1 = panel_left + x_shift + (panel_right - panel_left) * stops[i + 1].position;
+        const float x0 = panel_left + x_shift + (panel_right_screen - panel_left) * stops[i].position;
+        const float x1 = panel_left + x_shift + (panel_right_screen - panel_left) * stops[i + 1].position;
         auto c0 = stops[i].colour;
         auto c1 = stops[i + 1].colour;
         c0.a *= open_alpha * panel_native_alpha_scale;
@@ -174,7 +178,7 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
         selected = last_selection_index + (selected - last_selection_index) * p;
     }
 
-    overlay_canvas canvas(renderer);
+    // x already computed above with overlay_canvas so the panel and text share bounds.
     const float ui=config::CONFIG.textScale;
     const float pixels=28*canvas.scale*ui;
     const auto font=config::CONFIG.fontPath.string();
@@ -190,12 +194,6 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
             wrapped_choices.push_back(std::move(lines));
         }
     }
-    // Anchor the entry column to the panel's right edge on the real frame: the
-    // authored 1340..1677 column drifts off a cover-cropped panel, so walk the
-    // panel's screen right edge back through the canvas (357 and the 363 px
-    // clip width keep the stock 1697-relative layout on a 16:9 frame).
-    const float panel_edge_authored=(panel_right*static_cast<float>(renderer.frame_size.width)-canvas.ox)/canvas.scale;
-    const float x=panel_edge_authored-357.0F+(1-open_alpha)*12;
     float top=518-metrics.x;
     if(!top_action.empty()) {
         auto labels=dialog_text::wrap(top_action,available_width*canvas.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});

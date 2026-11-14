@@ -106,7 +106,7 @@ public:
             if(focused) c.rect(x+5,718,action_w-10,1,{1,1,1,1});
         }
         c.rect(box_x+8,790,box_w-16,76,grey(0.38F));
-        shell->render_controller_buttons(r,0.5F,0.78F,std::array{std::pair{action::options,"Save"},std::pair{action::extra,"Delete"},std::pair{action::cancel,"Back"}});
+        shell->render_controller_buttons(r,0.5F,0.83F,std::array{std::pair{action::options,"Save"},std::pair{action::extra,"Delete"},std::pair{action::cancel,"Back"}});
     }
     bool is_opaque() const override { return false; }
 private:
