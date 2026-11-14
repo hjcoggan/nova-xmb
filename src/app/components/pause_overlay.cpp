@@ -4,6 +4,7 @@ module;
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -15,6 +16,7 @@ module;
 #include <utility>
 
 #include <fcntl.h>
+#include <sys/wait.h>
 
 module openxmb.app;
 
@@ -78,20 +80,29 @@ int read_volume_pct() {
     return 50;
 }
 
-void spawn_detached(const char* prog, const char* arg1, const char* arg2) {
-    pid_t pid = fork();
+void spawn_detached(const char* prog, const char* arg1, const char* arg2,
+                    const char* arg3 = nullptr) {
+    const pid_t pid = fork();
     if (pid == 0) {
-        int devnull = open("/dev/null", O_RDWR);
-        if (devnull >= 0) {
-            dup2(devnull, STDIN_FILENO);
-            dup2(devnull, STDOUT_FILENO);
-            dup2(devnull, STDERR_FILENO);
-            if (devnull > STDERR_FILENO) {
-                close(devnull);
+        if (fork() == 0) {
+            const int devnull = open("/dev/null", O_RDWR);
+            if (devnull >= 0) {
+                dup2(devnull, STDIN_FILENO);
+                dup2(devnull, STDOUT_FILENO);
+                dup2(devnull, STDERR_FILENO);
+                if (devnull > STDERR_FILENO) {
+                    close(devnull);
+                }
             }
+            const char* const argv[] = {prog, arg1, arg2, arg3, nullptr};
+            execvp(prog, const_cast<char* const*>(argv));
+            _exit(127);
         }
-        execlp(prog, prog, arg1, arg2, nullptr);
-        _exit(127);
+        _exit(0);
+    }
+    if (pid > 0) {
+        int status = 0;
+        while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
     }
 }
 
@@ -99,20 +110,7 @@ void write_volume_pct(int pct) {
     pct = std::clamp(pct, 0, 100);
     char arg[16]{};
     std::snprintf(arg, sizeof(arg), "%d%%", pct);
-    pid_t pid = fork();
-    if (pid == 0) {
-        int devnull = open("/dev/null", O_RDWR);
-        if (devnull >= 0) {
-            dup2(devnull, STDIN_FILENO);
-            dup2(devnull, STDOUT_FILENO);
-            dup2(devnull, STDERR_FILENO);
-            if (devnull > STDERR_FILENO) {
-                close(devnull);
-            }
-        }
-        execlp("wpctl", "wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", arg, nullptr);
-        _exit(127);
-    }
+    spawn_detached("wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", arg);
 }
 
 int read_brightness_pct() {
@@ -176,10 +174,14 @@ void pause_overlay::render(auroreengine::gui_renderer& renderer, shell* xmb) {
     renderer.push_color(glm::vec4(1.0f, 1.0f, 1.0f, settle));
 
     overlay_canvas c(renderer);
-    c.rect(0, 0, 1920, 1080, {0.0f, 0.0f, 0.0f, 0.35f});
-    c.rect(0, 199, 1920, 680, {0.0f, 0.0f, 0.0f, 0.22f});
-    c.rect(0, 199, 1920, 1, {1.0f, 1.0f, 1.0f, 0.75f});
-    c.rect(0, 879, 1920, 1, {1.0f, 1.0f, 1.0f, 0.75f});
+    const float left = c.visible_left();
+    const float top = c.visible_top();
+    const float span_w = c.visible_right() - left;
+    const float span_h = c.visible_bottom() - top;
+    c.rect(left, top, span_w, span_h, {0.0f, 0.0f, 0.0f, 0.35f});
+    c.rect(left, 199, span_w, 680, {0.0f, 0.0f, 0.0f, 0.22f});
+    c.rect(left, 199, span_w, 1, {1.0f, 1.0f, 1.0f, 0.75f});
+    c.rect(left, 879, span_w, 1, {1.0f, 1.0f, 1.0f, 0.75f});
 
     const std::string title = current_game_id.empty()
         ? "Game Paused"

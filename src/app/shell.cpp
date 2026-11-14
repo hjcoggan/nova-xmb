@@ -150,6 +150,13 @@ namespace app
             }
         }
 
+        bool is_retiring_pause_overlay(const std::unique_ptr<component>& old_overlay)
+        {
+            return old_overlay &&
+                   (dynamic_cast<app::pause_overlay*>(old_overlay.get()) != nullptr) &&
+                   menu::has_active_child();
+        }
+
         std::filesystem::path existing_asset_or_fallback(std::filesystem::path path, std::filesystem::path fallback)
         {
             std::error_code ec;
@@ -240,6 +247,9 @@ namespace app
                 if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0 &&
                     listen(fd, 8) == 0) {
                     pause_sock_fd = fd;
+                    if (win) {
+                        win->config.wakeFd = pause_sock_fd;
+                    }
                 } else {
                     close(fd);
                     pause_sock_path.clear();
@@ -251,6 +261,9 @@ namespace app
     shell::~shell()
     {
         if (pause_sock_fd >= 0) {
+            if (win && win->config.wakeFd == pause_sock_fd) {
+                win->config.wakeFd = -1;
+            }
             close(pause_sock_fd);
             pause_sock_fd = -1;
         }
@@ -833,7 +846,11 @@ namespace app
                 }
             } catch(const std::exception& error) { spdlog::warn("Theme animation failed: {}",error.what()); }
         }
-        const bool overlay_ingame = ingame_mode || has_pause_overlay();
+        const bool retiring_pause_overlay = is_retiring_pause_overlay(old_overlay);
+        const bool overlay_ingame = ingame_mode || has_pause_overlay() || retiring_pause_overlay;
+        if (win) {
+            win->config.transparentSurface = overlay_ingame;
+        }
 #if OPENXMB_ENABLE_VIDEO_PLAYER
         const bool background_video_active=!background_video_path.empty() && !overlay_ingame &&
             (config::CONFIG.backgroundType==config::config::background_type::video || theme->frame.background==background_video_path);
@@ -1611,7 +1628,8 @@ namespace app
         bool fading_out_message = (!has_overlay && overlay_transition && old_overlay && (dynamic_cast<app::message_overlay*>(old_overlay.get()) != nullptr));
         // If a message overlay is appearing/disappearing, still render menu during transition
         const bool shell_fade_transition = overlay_transition && top_uses_shell_fade;
-        bool allow_menu = render_menu || ((top_is_message || fading_out_message) && shell_fade_transition);
+        bool allow_menu = !is_retiring_pause_overlay(old_overlay) &&
+            (render_menu || ((top_is_message || fading_out_message) && shell_fade_transition));
         if(allow_menu){
             const float startup_reveal = static_cast<float>(startup_sample().ui_reveal);
             renderer.push_color(glm::vec4(startup_reveal));
@@ -1680,8 +1698,9 @@ namespace app
             old_overlay->render(renderer, this);
             renderer.pop_color();
         } else if(old_overlay) {
-            // Fade-out finished; if it was a message overlay, drop background blur now
-            if(dynamic_cast<app::message_overlay*>(old_overlay.get()) != nullptr) {
+            // Fade-out finished; if it was a message or pause overlay, drop background blur now
+            if(dynamic_cast<app::message_overlay*>(old_overlay.get()) != nullptr ||
+               dynamic_cast<app::pause_overlay*>(old_overlay.get()) != nullptr) {
                 set_blur_background(false);
             }
             // Earlier submitted frames can still sample the retiring overlay's
@@ -1963,14 +1982,13 @@ namespace app
                 if(!artwork.empty()) {buttonTextures[i]=std::make_unique<texture>(device,allocator);loader->loadTexture(buttonTextures[i].get(),config::CONFIG.asset_directory/"icons/controller"/(std::string(artwork)+".png"));continue;}
             }
             if(family=="nintendo") {
-                // Nintendo-layout text badges, matching the print on a Switch-style
-                // pad: south=A, east=B, west=Y, north=X, so a layout-correct pad shows
-                // the confirm glyph on its A button. No new artwork is required.
+                // Nintendo-layout text badges matching Nova SDL_GAMECONTROLLERCONFIG
+                // label assignments (east=A/0, south=B/1, north=X/2, west=Y/3).
                 switch(code) {
                     case 0:button_labels[i]="A";break;
                     case 1:button_labels[i]="B";break;
-                    case 2:button_labels[i]="Y";break;
-                    case 3:button_labels[i]="X";break;
+                    case 2:button_labels[i]="X";break;
+                    case 3:button_labels[i]="Y";break;
                     case 4:button_labels[i]="-";break;
                     case 6:button_labels[i]="+";break;
                     case 7:button_labels[i]="L3";break;
@@ -2032,9 +2050,10 @@ namespace app
                 }
                 if(const auto name=config::CONFIG.preference("system.name","OpenXMB system");!name.empty())SDL_SetWindowTitle(win->win.get(),name.c_str());
                 const auto mode=config::CONFIG.preference("display.mode");
-                SDL_SetWindowFullscreen(win->win.get(),mode.empty()?desktop_default_flags:mode=="Windowed"?0:mode=="Borderless"?SDL_WINDOW_FULLSCREEN_DESKTOP:SDL_WINDOW_FULLSCREEN);
-                if(config::CONFIG.preference("display.monitor").empty())SDL_SetWindowPosition(win->win.get(),desktop_default_x,desktop_default_y);
-                if(config::CONFIG.preference("display.resolution").empty()){SDL_SetWindowDisplayMode(win->win.get(),nullptr);SDL_SetWindowSize(win->win.get(),desktop_default_width,desktop_default_height);}
+                const Uint32 target_flags=mode.empty()?desktop_default_flags:mode=="Windowed"?0:mode=="Borderless"?SDL_WINDOW_FULLSCREEN_DESKTOP:SDL_WINDOW_FULLSCREEN;
+                SDL_SetWindowFullscreen(win->win.get(),target_flags);
+                if(config::CONFIG.preference("display.monitor").empty()&&target_flags==0)SDL_SetWindowPosition(win->win.get(),desktop_default_x,desktop_default_y);
+                if(config::CONFIG.preference("display.resolution").empty()){SDL_SetWindowDisplayMode(win->win.get(),nullptr);if(target_flags==0)SDL_SetWindowSize(win->win.get(),desktop_default_width,desktop_default_height);}
                 if(const auto monitor=config::CONFIG.preference("display.monitor");!monitor.empty()) {SDL_Rect bounds{};if(SDL_GetDisplayBounds(static_cast<int>(config::CONFIG.number("display.monitor",0)),&bounds)==0)SDL_SetWindowPosition(win->win.get(),bounds.x,bounds.y);}
                 if(const auto resolution=config::CONFIG.preference("display.resolution");!resolution.empty()) {const auto x=resolution.find('x');if(x!=std::string::npos)try{SDL_DisplayMode display{};display.w=std::stoi(resolution.substr(0,x));display.h=std::stoi(resolution.substr(x+1));if(display.w>0&&display.h>0){SDL_SetWindowDisplayMode(win->win.get(),&display);SDL_SetWindowSize(win->win.get(),display.w,display.h);}}catch(const std::exception&) {spdlog::warn("Ignoring invalid saved resolution");}}
                 const auto requested_device=config::CONFIG.preference("audio.device");
