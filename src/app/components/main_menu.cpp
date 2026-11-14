@@ -749,9 +749,29 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
         rows.push_back(make_simple<menu::users_menu>("Operating System Users", asset_directory/"icons/icon_category_users.png", loader, xmb, loader));
         menus.push_back(panel_menu("Users", preferred_icon(asset_directory,"xmb_icon_000.png","icon_category_users.png"),std::move(rows)));
     }
+    if(config::CONFIG.console_mode()&&!config::CONFIG.hidden_category("power")) {
+        std::vector<std::unique_ptr<menu::menu_entry>> power_rows;
+        const auto power_action_entry = [&](std::string label, const char* cmd) {
+            return make_simple<menu::action_menu_entry>(std::move(label), asset_directory/"icons/icon_category_power.png", loader,
+                [cmd] {
+                    const int rc = std::system(cmd);
+                    return rc == 0 ? result::success : result::unsupported;
+                });
+        };
+        power_rows.push_back(power_action_entry("Sleep", "systemctl suspend"));
+        power_rows.push_back(power_action_entry("Restart", "systemctl reboot"));
+        power_rows.push_back(power_action_entry("Power Off", "systemctl poweroff"));
+        menus.push_back(panel_menu("Power", asset_directory/"icons/icon_category_power.png", std::move(power_rows)));
+    }
     if(!config::CONFIG.hidden_category("settings"))
     menus.push_back(make_simple<menu::settings_menu>("Settings"_(),
-        preferred_icon(asset_directory, "xmb_icon_001.png", "icon_category_settings.png"), loader, xmb, loader));
+        config::CONFIG.console_mode()
+            ? asset_directory/"icons/icon_category_settings.png"
+            : preferred_icon(asset_directory, "xmb_icon_001.png", "icon_category_settings.png"),
+        loader, xmb, loader));
+    if(config::CONFIG.console_mode()&&!config::CONFIG.hidden_category("applications"))
+    menus.push_back(make_simple<menu::applications_menu>("Applications"_(),
+        asset_directory/"icons/icon_category_apps.png", loader, xmb, loader));
     if(!config::CONFIG.hidden_category("photo")&&folder_has_content(config::CONFIG.pictures_path()))
     menus.push_back(make_simple<menu::files_menu>("Photo"_(),
         preferred_icon(asset_directory, "xmb_icon_002.png", "icon_category_photo.png"), loader, xmb,
@@ -798,7 +818,11 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
             }
         }
         if(!console_games_hidden) {
-            menus.push_back(panel_menu("Console Games",preferred_icon(asset_directory,"xmb_icon_005.png","icon_category_game.png"),std::move(console_rows)));
+            menus.push_back(panel_menu("Console Games",
+                config::CONFIG.console_mode()
+                    ? asset_directory/"icons/icon_category_console.png"
+                    : preferred_icon(asset_directory,"xmb_icon_005.png","icon_category_game.png"),
+                std::move(console_rows)));
         }
         if(!pc_games_hidden) {
             menus.push_back(panel_menu("PC Games",asset_directory/"icons/icon_category_pc.png",std::move(pc_rows)));
@@ -807,9 +831,6 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
             menus.push_back(panel_menu("Android Games",asset_directory/"icons/icon_category_android.png",std::move(android_rows)));
         }
     }
-    if(config::CONFIG.console_mode()&&!config::CONFIG.hidden_category("applications"))
-    menus.push_back(make_simple<menu::applications_menu>("Applications"_(),
-        preferred_icon(asset_directory, "xmb_icon_008.png", "icon_category_application.png"), loader, xmb, loader));
     if(!config::CONFIG.hidden_category("network")) {
         std::vector<std::unique_ptr<menu::menu_entry>> rows;
         if constexpr(OPENXMB_ENABLE_BROWSER != 0)
@@ -848,6 +869,15 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
                 ->get_selected_submenu();
         } else {
             spdlog::warn("Ignoring unsupported {} value", initial_category_env);
+        }
+    } else if(config::CONFIG.console_mode()) {
+        for(std::size_t i = 0; i < menus.size(); ++i) {
+            if(menus[i]->get_name() == "PC Games") {
+                selected = static_cast<int>(i);
+                last_selected = selected;
+                last_selected_menu_item = menus[i]->get_selected_submenu();
+                break;
+            }
         }
     }
 
@@ -1792,7 +1822,7 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
             menus[index]->get_glass_icon(), layout,
             center_x, center_y, extent, alpha);
 
-        if(active) {
+        if(active && !config::CONFIG.console_mode()) {
             canvas.text(menus[index]->get_name(),center_x,kCategoryLabelY+18,24,
                 {1,1,1,static_cast<float>(0.95*(1.0-0.55*chrome_transition))},0,true);
         }
