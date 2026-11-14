@@ -630,10 +630,14 @@ void draw_icon(
         return;
     }
 
-    const auto x = layout.x(center_x - extent * 0.5);
-    const auto y = layout.y(center_y - extent * 0.5);
-    const auto width = layout.width(extent);
-    const auto height = layout.height(extent);
+    const double slot_extent =
+        (custom_icon && texture.width > texture.height && texture.height > 0)
+            ? extent * std::clamp(static_cast<double>(texture.width) / static_cast<double>(texture.height), 1.0, 1.45)
+            : extent;
+    const auto x = layout.x(center_x - slot_extent * 0.5);
+    const auto y = layout.y(center_y - slot_extent * 0.5);
+    const auto width = layout.width(slot_extent);
+    const auto height = layout.height(slot_extent);
     if(custom_icon) {
         renderer.draw_image_a(texture, x, y, width, height,
             glm::vec4(1.0F, 1.0F, 1.0F, static_cast<float>(alpha)));
@@ -1870,10 +1874,15 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
                 SettingsSceneMetrics::icon_center_x + x_shift, center_y, extent, alpha,
                 entry.has_custom_icon());
 
+            const auto& icon_tex = entry.get_icon();
+            const double wide_label_shift =
+                (entry.has_custom_icon() && icon_tex.width > icon_tex.height && icon_tex.height > 0)
+                    ? 48.0
+                    : 0.0;
             const auto label_size = focused ? SettingsSceneMetrics::active_label_size : SettingsSceneMetrics::inactive_label_size;
             const auto text_value = focused ? 1.0f : 235.0f / 255.0f;
             const float item_pulse = 0.8F + 0.4F * std::sin(static_cast<float>(seconds_from_time_point(now)) * 1.848F);
-            const auto label_px = static_cast<float>(layout.offset_x + (SettingsSceneMetrics::label_x + x_shift) * layout.scale);
+            const auto label_px = static_cast<float>(layout.offset_x + (SettingsSceneMetrics::label_x + wide_label_shift + x_shift) * layout.scale);
             const auto label_py = static_cast<float>(layout.offset_y + (center_y + (focused ? 3.0 : 11.0)) * layout.scale);
             renderer.draw_text_pixels(entry.get_name(), label_px, label_py,
                 static_cast<float>(label_size * layout.scale),
