@@ -83,6 +83,7 @@ import openxmb.utils;
 import openxmb.xmb.captured_wave_renderer;
 import openxmb.xmb.monthly_background_renderer;
 import :startup_overlay;
+import :choice_overlay;
 import :message_overlay;
 import :pause_overlay;
 import :programs;
@@ -315,6 +316,24 @@ namespace app
                     open_pause(msg.substr(6));
                 } else if (msg == "RESUME" || msg == "QUIT") {
                     close_pause();
+                } else if (msg == "POWER_MENU") {
+                    static bool power_menu_open = false;
+                    if (!power_menu_open) {
+                        power_menu_open = true;
+                        auto* ov = emplace_overlay<choice_overlay>(
+                            std::vector<std::string>{"Sleep", "Restart", "Power Off", "Cancel"},
+                            0,
+                            [](unsigned idx) {
+                                power_menu_open = false;
+                                if (idx == 0) (void)std::system("systemctl suspend >/dev/null 2>&1 &");
+                                else if (idx == 1) (void)std::system("systemctl reboot >/dev/null 2>&1 &");
+                                else if (idx == 2) (void)std::system("systemctl poweroff >/dev/null 2>&1 &");
+                            },
+                            []() {
+                                power_menu_open = false;
+                            });
+                        ov->set_top_action("Power Menu");
+                    }
                 }
             }
         }
@@ -332,6 +351,7 @@ namespace app
     void shell::preload()
     {
         phase::preload();
+        desktop_settings::restore_saved_brightness();
 
         font_render = std::make_unique<font_renderer>(openxmb::localization::select_font(config::CONFIG.fontPath,config::CONFIG.asset_directory,config::CONFIG.language).string(), 32, device, allocator, win->swapchainExtent, win->gpuFeatures);
         image_render = std::make_unique<image_renderer>(device, win->swapchainExtent, win->gpuFeatures);

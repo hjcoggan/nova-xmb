@@ -4,6 +4,7 @@ module;
 
 #include <chrono>
 #include <string>
+#include <vector>
 
 export module openxmb.app:pause_overlay;
 
@@ -31,6 +32,7 @@ export class pause_overlay : public component, public action_receiver {
         int selected = 0;
         int volume_pct = 50;
         int brightness_pct = 50;
+        std::vector<std::string> guide_lines;
         std::chrono::steady_clock::time_point start_time = std::chrono::steady_clock::now();
 
         void refresh_levels();

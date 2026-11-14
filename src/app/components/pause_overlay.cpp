@@ -11,9 +11,12 @@ module;
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <nlohmann/json.hpp>
+#include <sstream>
 #include <string>
 #include <unistd.h>
 #include <utility>
+#include <vector>
 
 #include <fcntl.h>
 #include <sys/wait.h>
@@ -123,8 +126,88 @@ int read_brightness_pct() {
     return std::clamp(static_cast<int>(std::lround(100.0 * cur_b / max_b)), 5, 100);
 }
 
+std::filesystem::path brightness_state_path() {
+    if (const char* xdg = std::getenv("XDG_STATE_HOME"); xdg && *xdg) {
+        return std::filesystem::path(xdg) / "nova/brightness";
+    }
+    if (const char* home = std::getenv("HOME"); home && *home) {
+        return std::filesystem::path(home) / ".local/state/nova/brightness";
+    }
+    return {};
+}
+
+std::vector<std::string> load_button_guide(const std::string& game_id) {
+    if (game_id.empty() || game_id.find('/') != std::string::npos || game_id.find("..") != std::string::npos) {
+        return {};
+    }
+    const char* home = std::getenv("HOME");
+    if (!home || !*home) {
+        return {};
+    }
+    const auto manifest_path = std::filesystem::path(home) / "Games" / game_id / "game.json";
+    std::ifstream in(manifest_path);
+    if (!in) {
+        return {};
+    }
+    const auto parsed = nlohmann::json::parse(in, nullptr, false);
+    if (parsed.is_discarded() || !parsed.is_object() || !parsed.contains("buttonGuide")) {
+        return {};
+    }
+    const auto& guide = parsed["buttonGuide"];
+    std::vector<std::string> items;
+    if (guide.is_string()) {
+        std::istringstream iss(guide.get<std::string>());
+        std::string line;
+        while (std::getline(iss, line) && items.size() < 6) {
+            if (!line.empty()) items.push_back(line);
+        }
+    } else if (guide.is_array()) {
+        for (const auto& entry : guide) {
+            if (entry.is_string() && items.size() < 6) {
+                items.push_back(entry.get<std::string>());
+            }
+        }
+    } else if (guide.is_object()) {
+        for (auto it = guide.begin(); it != guide.end() && items.size() < 6; ++it) {
+            if (it.value().is_string()) {
+                items.push_back(it.key() + ": " + it.value().get<std::string>());
+            }
+        }
+    }
+    if (items.size() <= 1) {
+        return items;
+    }
+    std::vector<std::string> lines;
+    std::string current;
+    for (const auto& item : items) {
+        if (current.empty()) {
+            current = item;
+        } else if (current.size() + 5 + item.size() <= 54) {
+            current += "  |  " + item;
+        } else {
+            lines.push_back(std::move(current));
+            current = item;
+        }
+    }
+    if (!current.empty()) {
+        lines.push_back(std::move(current));
+    }
+    if (lines.size() > 2) {
+        lines.resize(2);
+    }
+    return lines;
+}
+
 void write_brightness_pct(int pct) {
     pct = std::clamp(pct, 5, 100);
+    if (const auto state = brightness_state_path(); !state.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(state.parent_path(), ec);
+        std::ofstream out(state);
+        if (out) {
+            out << pct << '\n';
+        }
+    }
     const auto dir = find_backlight_dir();
     if (dir.empty()) {
         return;
@@ -158,7 +241,8 @@ void run_nova_home_ctl(const char* verb, const std::string& game_id) {
 } // namespace
 
 pause_overlay::pause_overlay(std::string game_id)
-    : current_game_id(std::move(game_id)) {
+    : current_game_id(std::move(game_id)),
+      guide_lines(load_button_guide(current_game_id)) {
     refresh_levels();
 }
 
@@ -196,12 +280,17 @@ void pause_overlay::render(auroreengine::gui_renderer& renderer, shell* xmb) {
     };
 
     for (int i = 0; i < 4; ++i) {
-        const float y = 390.0f + static_cast<float>(i) * 84.0f;
+        const float y = 370.0f + static_cast<float>(i) * 76.0f;
         const float glow = (i == selected) ? xmb_canvas::pulse() : 0.0f;
         const glm::vec4 col = (i == selected)
             ? glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)
             : glm::vec4(0.85f, 0.85f, 0.85f, 0.90f);
         c.text(labels[static_cast<std::size_t>(i)], 960, y, 28, col, glow, true);
+    }
+
+    for (std::size_t g = 0; g < guide_lines.size(); ++g) {
+        const float gy = 696.0f + static_cast<float>(g) * 34.0f;
+        c.text(guide_lines[g], 960, gy, 21, {0.82f, 0.86f, 0.92f, 0.88f}, 0.0f, true);
     }
 
     const auto previous_scale = renderer.text_scale;
