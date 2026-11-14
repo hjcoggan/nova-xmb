@@ -2,8 +2,12 @@ module;
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <string>
@@ -22,7 +26,8 @@ export namespace openxmb::xmb {
 class StatusBarRenderer {
 public:
   void render(auroreengine::gui_renderer &renderer, const StatusBarTime &time,
-              float opacity = 1.0F, std::string_view label = {}) const;
+              float opacity = 1.0F, std::string_view label = {},
+              const StatusBarStatus &status = {}) const;
 
   // Convenience path for production. Deterministic tests and captures should
   // resolve their fixed civil time once and use the overload above.
@@ -84,6 +89,211 @@ void draw_logical_rect(auroreengine::gui_renderer &renderer,
   renderer.draw_rect({layout.x(x), layout.y(y)},
                      {layout.width(width), layout.height(height)}, color,
                      parameters);
+}
+
+// Device telemetry for the status indicators. sysfs is sampled on a slow timer
+// so the render loop never touches the filesystem per frame; a missing node
+// leaves its field unknown and the indicator is not drawn.
+constexpr auto status_poll_interval = std::chrono::seconds(3);
+constexpr const char *battery_supply_names[] = {
+    "/sys/class/power_supply/qcom-battmgr-bat",
+    "/sys/class/power_supply/battery",
+};
+
+[[nodiscard]] std::string
+read_sysfs_text(const std::filesystem::path &path) {
+  std::ifstream stream(path, std::ios::binary);
+  if (!stream) {
+    return {};
+  }
+  std::string text;
+  std::getline(stream, text);
+  while (!text.empty() && (text.back() == '\n' || text.back() == '\r' ||
+                           text.back() == ' ' || text.back() == '\t')) {
+    text.pop_back();
+  }
+  return text;
+}
+
+// Reads a leading unsigned integer and clamps it into 0..100; anything that
+// does not start with a digit (empty node, "Unknown") is -1.
+[[nodiscard]] int parse_status_percent(std::string_view text) noexcept {
+  int value = 0;
+  std::size_t digits = 0;
+  for (const auto character : text) {
+    if (character < '0' || character > '9') {
+      break;
+    }
+    value = value * 10 + (character - '0');
+    if (++digits > 3) {
+      break;
+    }
+  }
+  if (digits == 0) {
+    return -1;
+  }
+  return std::clamp(value, 0, 100);
+}
+
+// The named supplies come from the Nova SoC nodes; any other Linux host falls
+// back to the first supply whose type is Battery.
+[[nodiscard]] std::filesystem::path battery_supply_path() {
+  std::error_code error;
+  for (const auto candidate : battery_supply_names) {
+    if (std::filesystem::exists(std::filesystem::path{candidate} / "capacity",
+                                error)) {
+      return candidate;
+    }
+  }
+  const std::filesystem::path root{"/sys/class/power_supply"};
+  for (std::filesystem::directory_iterator entry{root, error}, end;
+       entry != end; entry.increment(error)) {
+    if (error) {
+      break;
+    }
+    if (read_sysfs_text(entry->path() / "type") == "Battery") {
+      return entry->path();
+    }
+  }
+  return {};
+}
+
+// The third numeric field of a /proc/net/wireless row is the driver's level in
+// dBm; it is smoothed and negative, for example "wlan0: 0000 64. -46. -256".
+[[nodiscard]] std::optional<int> wireless_level_from_row(std::string_view row) noexcept {
+  int numeric_fields = 0;
+  std::size_t index = 0;
+  while (index < row.size()) {
+    while (index < row.size() && row[index] != '-' &&
+           (row[index] < '0' || row[index] > '9')) {
+      ++index;
+    }
+    if (index >= row.size()) {
+      break;
+    }
+    const auto negative = row[index] == '-';
+    if (negative) {
+      ++index;
+    }
+    int magnitude = 0;
+    std::size_t digits = 0;
+    while (index < row.size() && row[index] >= '0' && row[index] <= '9') {
+      magnitude = magnitude * 10 + (row[index] - '0');
+      ++index;
+      ++digits;
+    }
+    if (index < row.size() && row[index] == '.') {
+      ++index;
+      while (index < row.size() && row[index] >= '0' && row[index] <= '9') {
+        ++index;
+      }
+    }
+    if (digits == 0) {
+      continue;
+    }
+    if (++numeric_fields == 3) {
+      return negative ? -magnitude : magnitude;
+    }
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] std::optional<int> wireless_level_dbm(std::string_view interface) {
+  std::ifstream stream("/proc/net/wireless");
+  if (!stream) {
+    return std::nullopt;
+  }
+  std::string line;
+  while (std::getline(stream, line)) {
+    const auto colon = line.find(':');
+    if (colon == std::string::npos) {
+      continue;
+    }
+    auto name = std::string_view{line}.substr(0, colon);
+    while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) {
+      name.remove_prefix(1);
+    }
+    while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) {
+      name.remove_suffix(1);
+    }
+    if (name == interface) {
+      return wireless_level_from_row(
+          std::string_view{line}.substr(colon + 1));
+    }
+  }
+  return std::nullopt;
+}
+
+// -100 dBm is an unusable link and -50 dBm or better is full bars.
+[[nodiscard]] int wireless_signal_from_dbm(int dbm) noexcept {
+  constexpr int empty_dbm = -100;
+  constexpr int full_dbm = -50;
+  return std::clamp((dbm - empty_dbm) * 100 / (full_dbm - empty_dbm), 0, 100);
+}
+
+// The first wireless interface in sysfs decides the indicator: an "up" link
+// means associated, a down link keeps the bars visible but dim, and no
+// wireless interface at all hides them.
+[[nodiscard]] int read_wifi_signal() {
+  std::error_code error;
+  const std::filesystem::path net_root{"/sys/class/net"};
+  std::string connected;
+  bool wireless_present = false;
+  for (std::filesystem::directory_iterator entry{net_root, error}, end;
+       entry != end; entry.increment(error)) {
+    if (error) {
+      break;
+    }
+    const auto name = entry->path().filename().string();
+    if (name.rfind("wl", 0) != 0) {
+      continue;
+    }
+    wireless_present = true;
+    if (read_sysfs_text(entry->path() / "operstate") == "up") {
+      connected = name;
+      break;
+    }
+  }
+  if (!wireless_present) {
+    return -1;
+  }
+  if (connected.empty()) {
+    return 0;
+  }
+  const auto level = wireless_level_dbm(connected);
+  // A cfg80211 driver that exports no legacy level is still associated, so
+  // show three bars rather than a false weak link.
+  return level.has_value() ? wireless_signal_from_dbm(*level) : 100;
+}
+
+[[nodiscard]] StatusBarStatus read_status_bar_status() {
+  StatusBarStatus status{};
+  const auto supply = battery_supply_path();
+  if (!supply.empty()) {
+    status.battery_percent =
+        parse_status_percent(read_sysfs_text(supply / "capacity"));
+    const auto state = read_sysfs_text(supply / "status");
+    status.charging = state == "Full" || state.starts_with("Charg");
+  }
+  status.wifi_signal = read_wifi_signal();
+  return status;
+}
+
+[[nodiscard]] const StatusBarStatus &polled_status_bar_status() {
+  static StatusBarStatus cached{};
+  static std::optional<std::chrono::steady_clock::time_point> refreshed_at;
+  const auto now = std::chrono::steady_clock::now();
+  if (!refreshed_at.has_value() || now - *refreshed_at >= status_poll_interval) {
+    cached = read_status_bar_status();
+    refreshed_at = now;
+  }
+  return cached;
+}
+
+// One framebuffer pixel in logical units: the 4:3 canvas scales down, and a
+// thinner outline would smear the battery frame and the Wi-Fi bars.
+[[nodiscard]] float logical_hairline(const ContainedLayout &layout) noexcept {
+  return std::max(0.75F, 1.0F / std::max(0.5F, layout.scale));
 }
 
 void draw_u_frame(auroreengine::gui_renderer &renderer,
@@ -226,11 +436,84 @@ void draw_clock_face(auroreengine::gui_renderer &renderer,
             icon_radius * 0.69F, hand_width, color);
 }
 
+constexpr float battery_body_width = 23.0F;
+constexpr float battery_body_height = 12.0F;
+constexpr float battery_nub_width = 3.0F;
+constexpr float battery_nub_height = 6.0F;
+constexpr float battery_text_gap = 7.0F;
+constexpr float wifi_bar_width = 4.0F;
+constexpr float wifi_bar_gap = 3.0F;
+constexpr float wifi_indicator_width =
+    wifi_bar_width * 3.0F + wifi_bar_gap * 2.0F;
+constexpr float indicator_gap = 12.0F;
+
+// Outline, nub and proportional fill. Charging lightens the fill towards green
+// so the state reads without a second glyph.
+void draw_battery_indicator(auroreengine::gui_renderer &renderer,
+                            const ContainedLayout &layout, float left_x,
+                            float center_y, int percent, bool charging,
+                            float opacity) {
+  const auto stroke = logical_hairline(layout);
+  const auto alpha = 0.92F * opacity;
+  const auto outline = glm::vec4{1.0F, 1.0F, 1.0F, alpha};
+  const auto top = center_y - battery_body_height * 0.5F;
+  draw_logical_rect(renderer, layout, left_x, top, battery_body_width, stroke,
+                    outline);
+  draw_logical_rect(renderer, layout, left_x,
+                    top + battery_body_height - stroke, battery_body_width,
+                    stroke, outline);
+  draw_logical_rect(renderer, layout, left_x, top, stroke, battery_body_height,
+                    outline);
+  draw_logical_rect(renderer, layout, left_x + battery_body_width - stroke,
+                    top, stroke, battery_body_height, outline);
+  draw_logical_rect(renderer, layout, left_x + battery_body_width,
+                    center_y - battery_nub_height * 0.5F, battery_nub_width,
+                    battery_nub_height, outline);
+
+  const auto inset = stroke * 1.75F;
+  const auto inner_width = battery_body_width - inset * 2.0F;
+  const auto inner_height = battery_body_height - inset * 2.0F;
+  const auto level = static_cast<float>(std::clamp(percent, 0, 100)) / 100.0F;
+  if (level <= 0.0F) {
+    return;
+  }
+  const auto fill = charging ? glm::vec4{0.52F, 1.0F, 0.62F, alpha}
+                             : glm::vec4{1.0F, 1.0F, 1.0F, alpha};
+  draw_logical_rect(renderer, layout, left_x + inset, top + inset,
+                    std::max(stroke, inner_width * level), inner_height,
+                    fill);
+}
+
+// Three ascending bars, lit in proportion to the link quality; a present but
+// unassociated interface keeps them dim instead of hiding the indicator.
+void draw_wifi_indicator(auroreengine::gui_renderer &renderer,
+                         const ContainedLayout &layout, float left_x,
+                         float center_y, int signal, float opacity) {
+  constexpr std::array<float, 3> bar_heights{5.0F, 8.0F, 11.0F};
+  const auto stroke = logical_hairline(layout);
+  const auto lit = signal <= 0    ? 0
+                   : signal >= 70 ? 3
+                   : signal >= 40 ? 2
+                                  : 1;
+  const auto bottom = center_y + 5.5F;
+  for (std::size_t index = 0; index < bar_heights.size(); ++index) {
+    const auto color = static_cast<int>(index) < lit
+                           ? glm::vec4{1.0F, 1.0F, 1.0F, 0.92F * opacity}
+                           : glm::vec4{1.0F, 1.0F, 1.0F, 0.26F * opacity};
+    const auto bar_height = std::max(bar_heights[index], stroke);
+    draw_logical_rect(renderer, layout,
+                      left_x + static_cast<float>(index) *
+                                   (wifi_bar_width + wifi_bar_gap),
+                      bottom - bar_height, wifi_bar_width, bar_height, color);
+  }
+}
+
 } // namespace
 
 void StatusBarRenderer::render(auroreengine::gui_renderer &renderer,
-                               const StatusBarTime &time,
-                               float opacity, std::string_view label) const {
+                               const StatusBarTime &time, float opacity,
+                               std::string_view label,
+                               const StatusBarStatus &status) const {
   opacity = std::clamp(opacity, 0.0F, 1.0F);
   if (opacity <= 0.001F || !valid_status_bar_time(time)) {
     return;
@@ -241,13 +524,14 @@ void StatusBarRenderer::render(auroreengine::gui_renderer &renderer,
   if (text_size == 0) {
     return;
   }
-  const std::string_view time_text=label.empty()?std::string_view(text_buffer.data(), text_size):label;
+  const std::string_view time_text =
+      label.empty() ? std::string_view(text_buffer.data(), text_size) : label;
   const auto layout = make_layout(renderer);
   const auto scale_guard = std::max(1.0F, layout.scale);
 
-  // The canvas callers already apply config::CONFIG.textScale, so multiplying
-  // it in again here made the status text noticeably larger than the submenu
-  // labels (main_menu.cpp draws those at 30 logical px without the scale).
+  // Submenu labels sit at 30 logical px without the shared text scale
+  // (main_menu.cpp), so the status text uses 26 and must not multiply
+  // config::CONFIG.textScale in again: the canvas callers already apply it.
   const auto text_px = 26.0F * layout.scale;
   const auto text_w_logical =
       renderer.text_width_pixels(time_text, text_px) / scale_guard;
@@ -257,32 +541,80 @@ void StatusBarRenderer::render(auroreengine::gui_renderer &renderer,
   const auto frame_height = logical_text_h + 12.0F;
   const auto icon_radius = 10.5F;
   const auto icon_scale = icon_radius / StatusBarMetrics::icon_radius;
+  const auto frame_y = StatusBarMetrics::frame_y;
+  const auto icon_center_y = frame_y + frame_height * 0.5F;
+
   const auto icon_center_x =
       StatusBarMetrics::logical_width - 14.0F - icon_radius;
   const auto text_right_x = icon_center_x - icon_radius - 10.0F;
-  const auto frame_x = std::max(0.0F, text_right_x - text_w_logical - 14.0F);
+  const auto text_left_x = text_right_x - text_w_logical;
+
+  // The indicators grow the glass frame leftwards from the date/time; a value
+  // that is unknown is dropped from the row instead of leaving a gap.
+  std::string battery_text;
+  auto battery_text_width = 0.0F;
+  if (status.battery_percent >= 0) {
+    battery_text = std::to_string(std::clamp(status.battery_percent, 0, 100));
+    battery_text += status.charging ? "%+" : "%";
+    battery_text_width =
+        renderer.text_width_pixels(battery_text, text_px) / scale_guard;
+  }
+  const auto battery_present = !battery_text.empty();
+  const auto wifi_present = status.wifi_signal >= 0;
+
+  auto cursor_x = text_left_x;
+  auto wifi_left = cursor_x;
+  if (wifi_present) {
+    wifi_left = cursor_x - indicator_gap - wifi_indicator_width;
+    cursor_x = wifi_left;
+  }
+  auto battery_left = cursor_x;
+  auto battery_text_left = cursor_x;
+  if (battery_present) {
+    battery_left = cursor_x - indicator_gap - battery_body_width -
+                   battery_nub_width - battery_text_gap - battery_text_width;
+    battery_text_left = battery_left + battery_body_width +
+                        battery_nub_width + battery_text_gap;
+    cursor_x = battery_left;
+  }
+
+  const auto frame_x = std::max(0.0F, cursor_x - 14.0F);
   const auto frame_x_norm = layout.x(frame_x);
-  const auto frame_y = StatusBarMetrics::frame_y;
   const auto glass_w = std::max(0.1F, (1.0F - frame_x_norm) * 2.0F);
-  renderer.draw_glass_frame(frame_x_norm, layout.y(frame_y),
-      glass_w, layout.height(frame_height), opacity);
+  renderer.draw_glass_frame(frame_x_norm, layout.y(frame_y), glass_w,
+                            layout.height(frame_height), opacity);
 
-  const auto text_px_x = layout.offset_x + (text_right_x - text_w_logical) * layout.scale;
-  const auto baseline_logical = frame_y + (frame_height - logical_text_h) * 0.5F + metrics.x;
+  if (wifi_present) {
+    draw_wifi_indicator(renderer, layout, wifi_left, icon_center_y,
+                        status.wifi_signal, opacity);
+  }
+  if (battery_present) {
+    draw_battery_indicator(renderer, layout, battery_left, icon_center_y,
+                           status.battery_percent, status.charging, opacity);
+  }
+
+  const auto baseline_logical =
+      frame_y + (frame_height - logical_text_h) * 0.5F + metrics.x;
   const auto text_px_y = layout.offset_y + baseline_logical * layout.scale;
-  renderer.draw_text_pixels(time_text, text_px_x, text_px_y + layout.scale,
-                            text_px, {0.0F, 0.0F, 0.0F, 0.5F * opacity}, 0.7F);
-  renderer.draw_text_pixels(time_text, text_px_x, text_px_y, text_px,
-                            {1.0F, 1.0F, 1.0F, 0.92F * opacity}, 0.7F);
+  const auto draw_label = [&](std::string_view text, float logical_left) {
+    const auto x = layout.offset_x + logical_left * layout.scale;
+    renderer.draw_text_pixels(text, x, text_px_y + layout.scale, text_px,
+                              {0.0F, 0.0F, 0.0F, 0.5F * opacity}, 0.7F);
+    renderer.draw_text_pixels(text, x, text_px_y, text_px,
+                              {1.0F, 1.0F, 1.0F, 0.92F * opacity}, 0.7F);
+  };
+  if (battery_present) {
+    draw_label(battery_text, battery_text_left);
+  }
+  draw_label(time_text, text_left_x);
 
-  const auto icon_center_y = frame_y + frame_height * 0.5F;
   const auto angles = resolve_clock_hand_angles(time);
   draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
-                  icon_radius, 0.0F, 2.0F * icon_scale, 2.6F * icon_scale, 4.0F * icon_scale,
-                  {0.0F, 0.0F, 0.0F, 0.55F * opacity});
+                  icon_radius, 0.0F, 2.0F * icon_scale, 2.6F * icon_scale,
+                  4.0F * icon_scale, {0.0F, 0.0F, 0.0F, 0.55F * opacity});
   draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
-                  icon_radius, 0.0F, 0.0F, 5.2F * icon_scale, 6.2F * icon_scale,
-                  {1.0F, 1.0F, 1.0F, 0.14F * opacity});
+                  icon_radius, 0.0F, 0.0F, 5.2F * icon_scale,
+                  6.2F * icon_scale, {1.0F, 1.0F, 1.0F, 0.14F * opacity});
   draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
                   icon_radius, 0.0F, 0.0F, 2.6F * icon_scale, 4.0F * icon_scale,
                   {1.0F, 1.0F, 1.0F, 0.96F * opacity});
@@ -308,7 +640,8 @@ bool StatusBarRenderer::render_local(
   if(config::CONFIG.enabled("time.seconds",false))format+=":%S";
   if(config::CONFIG.preference("time.format","24-hour")=="12-hour")format+=" %p";
   std::array<char,64> formatted{};std::strftime(formatted.data(),formatted.size(),format.c_str(),&tm);
-  render(renderer, *local, opacity,formatted.data());
+  render(renderer, *local, opacity, formatted.data(),
+         polled_status_bar_status());
   return true;
 }
 

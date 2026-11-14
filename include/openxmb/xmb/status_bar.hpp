@@ -43,6 +43,20 @@ struct StatusBarTime {
                                    const StatusBarTime &) noexcept = default;
 };
 
+// Live device state drawn to the left of the date/time inside the same
+// top-right glass frame. The renderer refreshes it from Linux sysfs on a slow
+// timer; every field keeps an "unknown" value so other platforms, captures and
+// unit tests still render the clock alone.
+struct StatusBarStatus {
+  // Charge level 0..100, or -1 when no battery supply is readable.
+  int battery_percent = -1;
+  // The supply reports Charging, Full or a fast variant.
+  bool charging = false;
+  // -1: no wireless interface, indicator hidden. 0: interface present but
+  // down or unassociated, bars drawn dim. 1..100: link quality in percent.
+  int wifi_signal = -1;
+};
+
 struct ClockHandAngles {
   float hour_radians{};
   float minute_radians{};
