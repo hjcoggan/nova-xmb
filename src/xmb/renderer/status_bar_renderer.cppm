@@ -243,51 +243,48 @@ void StatusBarRenderer::render(auroreengine::gui_renderer &renderer,
   }
   const std::string_view time_text=label.empty()?std::string_view(text_buffer.data(), text_size):label;
   const auto layout = make_layout(renderer);
+  const auto scale_guard = std::max(1.0F, layout.scale);
 
-  const auto text_scale =
-      layout.height(StatusBarMetrics::text_size * 2.2F);
-  // Aurore's text measurement API consumes the pre-geometry half scale (the
-  // draw path expands it in the font geometry stage). Measuring at the draw
-  // scale double-counts width and shifted right-aligned text far to the left.
-  const auto measured = renderer.measure_text(time_text, text_scale * 0.5F);
-  const auto ts = std::max(0.5F, renderer.text_scale);
-  const auto logical_text_w =
-      measured.x * layout.framebuffer_width / std::max(1.0F, layout.scale);
-  const auto logical_text_h = std::max(
-      StatusBarMetrics::text_size * ts * 0.88F,
-      measured.y * layout.framebuffer_height / std::max(1.0F, layout.scale));
-  const auto frame_height =
-      std::max(StatusBarMetrics::frame_height * 0.85F, logical_text_h + 10.0F);
-  const auto icon_radius =
-      StatusBarMetrics::icon_radius * std::max(1.0F, ts * 0.75F);
+  // The canvas callers already apply config::CONFIG.textScale, so multiplying
+  // it in again here made the status text noticeably larger than the submenu
+  // labels (main_menu.cpp draws those at 30 logical px without the scale).
+  const auto text_px = 26.0F * layout.scale;
+  const auto text_w_logical =
+      renderer.text_width_pixels(time_text, text_px) / scale_guard;
+  const auto metrics =
+      renderer.text_line_metrics_pixels(text_px) / scale_guard;
+  const auto logical_text_h = metrics.x + metrics.y;
+  const auto frame_height = logical_text_h + 12.0F;
+  const auto icon_radius = 10.5F;
+  const auto icon_scale = icon_radius / StatusBarMetrics::icon_radius;
   const auto icon_center_x =
-      StatusBarMetrics::logical_width - 18.0F - icon_radius;
+      StatusBarMetrics::logical_width - 14.0F - icon_radius;
   const auto text_right_x = icon_center_x - icon_radius - 10.0F;
-  const auto frame_x = std::max(0.0F, text_right_x - logical_text_w - 16.0F);
+  const auto frame_x = std::max(0.0F, text_right_x - text_w_logical - 14.0F);
   const auto frame_x_norm = layout.x(frame_x);
   const auto frame_y = StatusBarMetrics::frame_y;
   const auto glass_w = std::max(0.1F, (1.0F - frame_x_norm) * 2.0F);
   renderer.draw_glass_frame(frame_x_norm, layout.y(frame_y),
       glass_w, layout.height(frame_height), opacity);
 
-  const auto text_x = layout.x(text_right_x) - measured.x;
-  const auto text_y =
-      layout.y(frame_y + (frame_height - logical_text_h) * 0.5F - 2.0F);
-  renderer.draw_text(time_text, text_x, text_y + layout.height(1.0F),
-                     text_scale, {0.0F, 0.0F, 0.0F, 0.5F * opacity});
-  renderer.draw_text(time_text, text_x, text_y, text_scale,
-                     {1.0F, 1.0F, 1.0F, 0.92F * opacity});
+  const auto text_px_x = layout.offset_x + (text_right_x - text_w_logical) * layout.scale;
+  const auto baseline_logical = frame_y + (frame_height - logical_text_h) * 0.5F + metrics.x;
+  const auto text_px_y = layout.offset_y + baseline_logical * layout.scale;
+  renderer.draw_text_pixels(time_text, text_px_x, text_px_y + layout.scale,
+                            text_px, {0.0F, 0.0F, 0.0F, 0.5F * opacity}, 0.7F);
+  renderer.draw_text_pixels(time_text, text_px_x, text_px_y, text_px,
+                            {1.0F, 1.0F, 1.0F, 0.92F * opacity}, 0.7F);
 
   const auto icon_center_y = frame_y + frame_height * 0.5F;
   const auto angles = resolve_clock_hand_angles(time);
   draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
-                  icon_radius, 0.0F, 2.0F, 2.6F, 4.0F,
+                  icon_radius, 0.0F, 2.0F * icon_scale, 2.6F * icon_scale, 4.0F * icon_scale,
                   {0.0F, 0.0F, 0.0F, 0.55F * opacity});
   draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
-                  icon_radius, 0.0F, 0.0F, 5.2F, 6.2F,
+                  icon_radius, 0.0F, 0.0F, 5.2F * icon_scale, 6.2F * icon_scale,
                   {1.0F, 1.0F, 1.0F, 0.14F * opacity});
   draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
-                  icon_radius, 0.0F, 0.0F, 2.6F, 4.0F,
+                  icon_radius, 0.0F, 0.0F, 2.6F * icon_scale, 4.0F * icon_scale,
                   {1.0F, 1.0F, 1.0F, 0.96F * opacity});
 }
 
