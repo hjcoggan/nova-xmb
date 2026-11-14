@@ -21,6 +21,7 @@
 module;
 
 #include <format>
+#include <functional>
 #include <memory>
 #include <ranges>
 #include <string>
@@ -36,8 +37,9 @@ import glm;
 import spdlog;
 
 namespace app {
-    progress_overlay::progress_overlay(std::string title, std::unique_ptr<progress_item>&& item, bool show_progress)
-        : title(std::move(title)), item(std::move(item)), show_progress(show_progress)
+    progress_overlay::progress_overlay(std::string title, std::unique_ptr<progress_item>&& item, bool show_progress,
+            std::function<void(class shell*, bool)> on_complete)
+        : title(std::move(title)), item(std::move(item)), show_progress(show_progress), on_complete(std::move(on_complete))
     {
         auto status = this->item->init(status_message);
         if(status == progress_item::status::error) {
@@ -48,23 +50,29 @@ namespace app {
     }
 
     result progress_overlay::tick(shell* xmb) {
-        auto status = item->progress(progress, status_message);
-        if(status == progress_item::status::error) {
-            failed = true;
-        } else if(status == progress_item::status::success) {
-            done = true;
+        if(!failed && !done) {
+            auto status = item->progress(progress, status_message);
+            if(status == progress_item::status::error) {
+                failed = true;
+            } else if(status == progress_item::status::success) {
+                done = true;
+            }
         }
 
         if(failed) {
             spdlog::error("Progress failed: \"{}\"", status_message);
-            if(!status_message.empty()) {
+            if(on_complete) {
+                on_complete(xmb, false);
+            } else if(!status_message.empty()) {
                 xmb->emplace_overlay<message_overlay>(title, status_message, std::vector<std::string>{"OK"});
             }
             return result::failure | result::close;
         }
         if(done) {
             spdlog::info("Progress done: \"{}\"", status_message);
-            if(!status_message.empty()) {
+            if(on_complete) {
+                on_complete(xmb, true);
+            } else if(!status_message.empty()) {
                 xmb->emplace_overlay<message_overlay>(title, status_message, std::vector<std::string>{"OK"});
             }
             return result::success | result::close;

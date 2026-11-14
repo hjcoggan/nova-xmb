@@ -23,6 +23,7 @@
 
 module;
 
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -55,7 +56,8 @@ export class progress_item {
 
 export class progress_overlay : public component, public action_receiver {
     public:
-        progress_overlay(std::string title, std::unique_ptr<progress_item>&& item, bool show_progress = true);
+        progress_overlay(std::string title, std::unique_ptr<progress_item>&& item, bool show_progress = true,
+            std::function<void(class shell*, bool)> on_complete = {});
 
         result tick(class shell* xmb) override;
         void render(auroreengine::gui_renderer& renderer, class shell* xmb) override;
@@ -64,6 +66,7 @@ export class progress_overlay : public component, public action_receiver {
         std::string title;
         std::unique_ptr<progress_item> item;
         bool show_progress;
+        std::function<void(class shell*, bool)> on_complete;
 
         double progress = 0.0;
         bool done = false;

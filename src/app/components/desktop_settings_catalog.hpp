@@ -40,13 +40,13 @@ inline const std::vector<Entry>& entries() {
         {"Display","text.scale","Interface Text Size","Scale text throughout OpenXMB.",{"0.8","1.0","1.2","1.4"}},
         {"Display","ui.scale","Interface Scale","Scale icons, text, and layout together.",{"1.0","1.25","1.35","1.5","1.75","2.0"}},
         {"Display","display.brightness","Brightness","Adjust the OpenXMB scene brightness.",{"0.6","0.8","1.0","1.2"}},
-        {"Display","display.screen.brightness","Screen Brightness","Hardware panel backlight level.",{"10","25","40","55","70","85","100"}},
+        {"Display","display.screen.brightness","Screen Brightness","Hardware panel backlight level.",{"10","20","30","40","50","60","70","80","90","100"}},
         {"Display","vsync","VSync","Synchronise presentation to the display.",{"On","Off"}},
         {"Display","fps","Frame Limit","Maximum shell rendering rate.",{"30","60","120","144","240","Unlimited"}},
         {"Display","samples","Anti-aliasing","Multisample anti-aliasing for supported graphics hardware.",{"1","2","4","8"}},
         {"Display","glass","Glass Icons","Use refractive icon materials.",{"On","Off"}},
         {"Sound","audio.device","Audio Output Device","Select an available playback device."},
-        {"Sound","audio.master","Master Volume","Volume for all OpenXMB audio.",{"0","25","50","75","100"}},
+        {"Sound","audio.master","Master Volume","System audio output volume.",{"0","10","20","30","40","50","60","70","80","90","100"}},
         {"Sound","audio.effects","Interface Volume","Volume of navigation and confirmation sounds.",{"0","25","50","75","100"}},
         {"Sound","audio.music","Music Volume","Default volume for music playback.",{"0","25","50","75","100"}},
         {"Sound","audio.video","Video Volume","Default volume for video playback.",{"0","25","50","75","100"}},
@@ -67,9 +67,10 @@ inline const std::vector<Entry>& entries() {
         {"Browser","browser.downloads","Downloads Folder","Directory for browser downloads."},
         {"Browser","browser.clear","Clear Browsing Data","Remove browser cookies and cached site data."},
         {"Network","network.wifi","Wi-Fi","Turn the Wi-Fi radio on or off.",{"On","Off"}},
-        {"Network","network.wifi.join","Join Wi-Fi Network","Connect to a network by name (SSID)."},
-        {"Network","network.aeroplane","Aeroplane Mode","Disable all radios (Wi-Fi and Bluetooth).",{"Off","On"}},
+        {"Network","network.wifi.join","Join Wi-Fi Network","Scan for and connect to a Wi-Fi network."},
         {"Network","network.bluetooth","Bluetooth","Turn the Bluetooth radio on or off.",{"On","Off"}},
+        {"Network","network.bluetooth.devices","Bluetooth Devices","Scan, pair and connect Bluetooth devices."},
+        {"Network","network.aeroplane","Aeroplane Mode","Disable all radios (Wi-Fi and Bluetooth).",{"Off","On"}},
         {"Game","games.folder","Game Library Folder","Choose the folder scanned for games."},
         {"Game","games.rescan","Rescan Game Library","Refresh the configured game library."},
         {"Game","games.launch","After Launching a Game","Choose how the shell behaves while a game runs.",{"Keep Running","Minimise"}},
@@ -96,7 +97,7 @@ inline void populate(openxmb::xmb::Catalog& catalog,
                 {"System","category.settings.system.settings"},{"Display","category.settings.display.settings"},
                 {"Sound","category.settings.sound.settings"},{"Music","category.settings.music.settings"},
                 {"Date and Time","category.settings.date.and.time.settings"},{"Power Save","category.settings.power.save.settings"},
-                {"Game","category.settings.game.settings"},{"Browser","category.settings.network.settings"}};
+                {"Game","category.settings.game.settings"},{"Network","category.settings.network.settings"}};
             node.icon_ref="compat.icon.xmb.icon.001";
             for(const auto& [name,id]:icons)if(name==entry.group&&catalog.nodes.contains(id))node.icon_ref=catalog.nodes.at(id).icon_ref;
             node.action_id="navigate.children";

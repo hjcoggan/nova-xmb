@@ -897,13 +897,12 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
             // monitor choice on a fixed panel, autostart .desktop writing,
             // the browser group, log-folder opening, keyboard bindings and
             // the "keep running / minimise" launch behaviour of a desktop
-            // session. The update entry stays hidden until it works.
+            // session.
             static constexpr std::array<std::string_view,7> console_hidden_keys{
                 "autostart","display.mode","display.monitor","display.resolution",
                 "debug.logs","games.launch","input.keyboard"};
             constexpr std::string_view desktop_prefix{"category.settings.desktop."};
             const auto hidden_node=[&](std::string_view id) {
-                if(id=="category.settings.system.update") return true;
                 if(id=="category.settings.desktop.Browser") return true;
                 if(id.starts_with("category.settings.desktop.browser.")) return true;
                 if(!id.starts_with(desktop_prefix)) return false;
