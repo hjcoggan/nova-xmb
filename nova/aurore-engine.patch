@@ -1,0 +1,313 @@
+AuroreEngine changes carried by the nova branch (engine rev 52c724e3).
+Apply with `patch -p1` in the engine checkout; see nova/README.md.
+
+- wayland_surface: clear SDL2's opaque wl_region while the swapchain is
+  transparent, so sway alpha-blends the pause overlay over the frozen game.
+- swapchain_policy: prefer pre-multiplied composite alpha over opaque.
+- window: resizable window; while the frame loop is throttled (a game is
+  running) wait in short poll slices on a wake fd so pause IPC and resize
+  events are handled immediately.
+
+diff -ruN a/src/CMakeLists.txt b/src/CMakeLists.txt
+--- a/src/CMakeLists.txt	2026-11-14 17:48:34.596130560 +1000
++++ b/src/CMakeLists.txt	2026-11-14 17:48:34.600646635 +1000
+@@ -6,6 +6,7 @@
+   phase.cpp
+   resource_loader.cpp
+   shaders.cpp
++  wayland_surface.cpp
+ )
+ set(MODULE_SOURCES
+   auroreengine.cppm
+@@ -108,3 +109,19 @@
+ else()
+   message(STATUS "auroreengine: HarfBuzz not found — shaping disabled")
+ endif()
++
++set_source_files_properties(wayland_surface.cpp PROPERTIES CXX_SCAN_FOR_MODULES OFF)
++if(TARGET SDL2::SDL2)
++  target_link_libraries(auroreengine PRIVATE SDL2::SDL2)
++endif()
++if(UNIX AND NOT APPLE)
++  find_package(PkgConfig QUIET)
++  if(PKG_CONFIG_FOUND)
++    pkg_check_modules(PC_WAYLAND_CLIENT QUIET wayland-client)
++    if(PC_WAYLAND_CLIENT_FOUND)
++      target_include_directories(auroreengine PRIVATE ${PC_WAYLAND_CLIENT_INCLUDE_DIRS})
++      target_link_libraries(auroreengine PUBLIC ${PC_WAYLAND_CLIENT_LINK_LIBRARIES} ${PC_WAYLAND_CLIENT_LIBRARIES})
++      set_source_files_properties(wayland_surface.cpp PROPERTIES COMPILE_DEFINITIONS AUROREENGINE_HAS_WAYLAND=1)
++    endif()
++  endif()
++endif()
+diff -ruN a/src/swapchain_policy.hpp b/src/swapchain_policy.hpp
+--- a/src/swapchain_policy.hpp	2026-11-14 17:48:34.597764197 +1000
++++ b/src/swapchain_policy.hpp	2026-11-14 17:48:34.603076695 +1000
+@@ -5,7 +5,7 @@
+ #include <initializer_list>
+ namespace auroreengine::detail {
+ inline VkCompositeAlphaFlagBitsKHR choose_composite_alpha(VkCompositeAlphaFlagsKHR supported) {
+-    for(const auto mode:{VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
++    for(const auto mode:{VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+                          VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR})
+         if(supported&mode)return mode;
+     throw std::runtime_error("Surface exposes no supported composite alpha mode");
+diff -ruN a/src/wayland_surface.cpp b/src/wayland_surface.cpp
+--- a/src/wayland_surface.cpp	1970-01-01 10:00:00.000000000 +1000
++++ b/src/wayland_surface.cpp	2026-11-14 17:48:34.600690177 +1000
+@@ -0,0 +1,142 @@
++#include "wayland_surface.hpp"
++
++#if defined(__unix__) || defined(__APPLE__)
++#include <poll.h>
++#endif
++
++#if __has_include(<SDL2/SDL_syswm.h>)
++#include <SDL2/SDL_syswm.h>
++#else
++#include <SDL_syswm.h>
++#endif
++
++#if defined(AUROREENGINE_HAS_WAYLAND) && defined(SDL_VIDEO_DRIVER_WAYLAND)
++#include <wayland-client.h>
++#include <cstring>
++#endif
++
++namespace auroreengine::detail {
++
++#if defined(AUROREENGINE_HAS_WAYLAND) && defined(SDL_VIDEO_DRIVER_WAYLAND)
++namespace {
++
++struct RegistryState {
++    wl_compositor* compositor = nullptr;
++};
++
++void handle_global(void* data, wl_registry* registry, uint32_t name,
++                   const char* interface, uint32_t version) {
++    auto* state = static_cast<RegistryState*>(data);
++    if (std::strcmp(interface, wl_compositor_interface.name) == 0 &&
++        state->compositor == nullptr) {
++        const uint32_t bind_ver = version < 4 ? version : 4;
++        state->compositor = static_cast<wl_compositor*>(
++            wl_registry_bind(registry, name, &wl_compositor_interface, bind_ver));
++    }
++}
++
++void handle_global_remove(void*, wl_registry*, uint32_t) {}
++
++const wl_registry_listener kRegistryListener = {
++    handle_global,
++    handle_global_remove,
++};
++
++wl_compositor* bind_compositor(wl_display* display) {
++    // Use a private proxy wrapper and event queue so binding wl_compositor
++    // never drains SDL2's main Wayland event queue mid-frame.
++    static wl_display* cached_display = nullptr;
++    static wl_compositor* cached_compositor = nullptr;
++    if (cached_display == display && cached_compositor != nullptr) {
++        return cached_compositor;
++    }
++
++    wl_event_queue* queue = wl_display_create_queue(display);
++    if (!queue) {
++        return nullptr;
++    }
++    auto* wrapped = static_cast<wl_display*>(wl_proxy_create_wrapper(display));
++    if (!wrapped) {
++        wl_event_queue_destroy(queue);
++        return nullptr;
++    }
++    wl_proxy_set_queue(reinterpret_cast<wl_proxy*>(wrapped), queue);
++
++    RegistryState state{};
++    if (wl_registry* registry = wl_display_get_registry(wrapped)) {
++        wl_registry_add_listener(registry, &kRegistryListener, &state);
++        wl_display_roundtrip_queue(display, queue);
++        wl_registry_destroy(registry);
++    }
++
++    if (state.compositor) {
++        // Detach the long-lived global from the temporary queue before destroying it.
++        wl_proxy_set_queue(reinterpret_cast<wl_proxy*>(state.compositor), nullptr);
++        cached_display = display;
++        cached_compositor = state.compositor;
++    }
++
++    wl_proxy_wrapper_destroy(wrapped);
++    wl_event_queue_destroy(queue);
++    return state.compositor;
++}
++
++} // namespace
++#endif
++
++void sync_wayland_opaque_region(SDL_Window* window, bool transparent, int width, int height) {
++#if defined(AUROREENGINE_HAS_WAYLAND) && defined(SDL_VIDEO_DRIVER_WAYLAND)
++    if (!window) {
++        return;
++    }
++    SDL_SysWMinfo info{};
++    SDL_VERSION(&info.version);
++    if (!SDL_GetWindowWMInfo(window, &info) || info.subsystem != SDL_SYSWM_WAYLAND) {
++        return;
++    }
++    wl_surface* surface = info.info.wl.surface;
++    wl_display* display = info.info.wl.display;
++    if (!surface) {
++        return;
++    }
++    if (transparent) {
++        // SDL2 installs a full-window opaque wl_region at creation and on every
++        // Wayland configure/resize, causing Sway to skip alpha blending. Clear it
++        // while transparent compositing is active.
++        wl_surface_set_opaque_region(surface, nullptr);
++        return;
++    }
++    if (!display || width <= 0 || height <= 0) {
++        return;
++    }
++    if (wl_compositor* compositor = bind_compositor(display)) {
++        if (wl_region* region = wl_compositor_create_region(compositor)) {
++            wl_region_add(region, 0, 0, width, height);
++            wl_surface_set_opaque_region(surface, region);
++            wl_region_destroy(region);
++        }
++    }
++#else
++    (void)window;
++    (void)transparent;
++    (void)width;
++    (void)height;
++#endif
++}
++
++bool wait_fd_readable(int fd, int timeout_ms) {
++#if defined(__unix__) || defined(__APPLE__)
++    if (fd < 0) {
++        return false;
++    }
++    pollfd pfd{fd, POLLIN, 0};
++    const int ready = poll(&pfd, 1, timeout_ms);
++    return ready > 0 && (pfd.revents & POLLIN) != 0;
++#else
++    (void)fd;
++    (void)timeout_ms;
++    return false;
++#endif
++}
++
++} // namespace auroreengine::detail
+diff -ruN a/src/wayland_surface.hpp b/src/wayland_surface.hpp
+--- a/src/wayland_surface.hpp	1970-01-01 10:00:00.000000000 +1000
++++ b/src/wayland_surface.hpp	2026-11-14 17:48:34.600705678 +1000
+@@ -0,0 +1,10 @@
++#pragma once
++
++struct SDL_Window;
++
++namespace auroreengine::detail {
++
++void sync_wayland_opaque_region(SDL_Window* window, bool transparent, int width, int height);
++bool wait_fd_readable(int fd, int timeout_ms);
++
++} // namespace auroreengine::detail
+diff -ruN a/src/window.cppm b/src/window.cppm
+--- a/src/window.cppm	2026-11-14 17:48:34.598378244 +1000
++++ b/src/window.cppm	2026-11-14 17:48:34.600811928 +1000
+@@ -14,6 +14,7 @@
+ #endif
+ 
+ #include "swapchain_policy.hpp"
++#include "wayland_surface.hpp"
+ #include <algorithm>
+ #include <cstdlib>
+ #include <cstdint>
+@@ -49,6 +50,9 @@
+ #ifdef SDL_WINDOW_SHOWN
+ #undef SDL_WINDOW_SHOWN
+ #endif
++#ifdef SDL_WINDOW_RESIZABLE
++#undef SDL_WINDOW_RESIZABLE
++#endif
+ #ifdef SDL_WINDOW_VULKAN
+ #undef SDL_WINDOW_VULKAN
+ #endif
+@@ -146,6 +150,8 @@
+ 
+     vk::PresentModeKHR preferredPresentMode = vk::PresentModeKHR::eFifoRelaxed;
+     int fpsLimit = -1;
++    int wakeFd = -1;
++    bool transparentSurface = false;
+     vk::SampleCountFlagBits sampleCount = vk::SampleCountFlagBits::e1;
+     bool profileFrames = false;
+     uint64_t profileFrameInterval = 120;
+@@ -411,13 +417,35 @@
+                     afterEvents = now;
+                     auto dt = std::chrono::duration<double>(now - lastFrame).count();
+ 
+-                    // Honour FPS limit if set — sleep until target time based on lastFrame
++                    // Honour FPS limit if set — sleep until target time based on lastFrame.
++                    // When wakeFd is armed on slow throttled loops (>20 ms, e.g. 1 Hz while
++                    // a child game runs), wait in 50 ms poll slices so pause IPC and window
++                    // resize events wake the UI immediately.
+                     if(config.fpsLimit > 0) {
+                         auto frame_time = std::chrono::duration<double>(std::chrono::seconds(1)) / config.fpsLimit;
+                         auto target = lastFrame + frame_time;
+-                        if(now < target) {
++                        while(now < target && !swapchainDirty) {
++                            auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(target - now).count();
++                            if(config.wakeFd >= 0 && remaining_ms > 20) {
++                                const int slice_ms = static_cast<int>(std::min<long long>(remaining_ms, 50));
++                                if(detail::wait_fd_readable(config.wakeFd, slice_ms)) {
++                                    now = std::chrono::steady_clock::now();
++                                    break;
++                                }
++                                handle_sdl_events(quit);
++                                if(quit) {
++                                    return;
++                                }
++                                if(swapchainDirty) {
++                                    now = std::chrono::steady_clock::now();
++                                    break;
++                                }
++                                now = std::chrono::steady_clock::now();
++                                continue;
++                            }
+                             std::this_thread::sleep_until(target);
+                             now = std::chrono::steady_clock::now();
++                            break;
+                         }
+                     }
+                     lastFrame = now;
+@@ -558,6 +586,14 @@
+                     submitGraphics(submitInfo, headlessFences[imageIndex].get());
+                     afterPresent = std::chrono::steady_clock::now();
+                 } else {
++                    if(config.transparentSurface || lastTransparentSurface) {
++                        detail::sync_wayland_opaque_region(
++                            win.get(),
++                            config.transparentSurface,
++                            static_cast<int>(window_width),
++                            static_cast<int>(window_height));
++                        lastTransparentSurface = config.transparentSurface;
++                    }
+                     vk::PresentInfoKHR present_info(renderFinishedSemaphores[imageIndex].get(), swapchain.get(), imageIndex);
+                     {
+                         std::scoped_lock queueGuard(queueLock);
+@@ -732,6 +768,7 @@
+ 
+         sdl::unique_window win;
+         uint32_t window_width, window_height;
++        bool lastTransparentSurface = false;
+ 
+         vk::UniqueInstance instance;
+         vk::UniqueSurfaceKHR surface;
+@@ -848,7 +885,7 @@
+             }
+             win = sdl::unique_window(
+                 sdl::CreateWindow(config.title.c_str(), rect.x, rect.y, rect.w, rect.h,
+-                    SDL_WINDOW_SHOWN | (config.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) | (config.workaround_no_swapchain ? 0 : SDL_WINDOW_VULKAN))
++                    SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | (config.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) | (config.workaround_no_swapchain ? 0 : SDL_WINDOW_VULKAN))
+             );
+             if(!win) {
+                 throw std::runtime_error(std::string("SDL_CreateWindow failed: ") + sdl::GetError());
