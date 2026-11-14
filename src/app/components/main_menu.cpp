@@ -751,16 +751,16 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
     }
     if(config::CONFIG.console_mode()&&!config::CONFIG.hidden_category("power")) {
         std::vector<std::unique_ptr<menu::menu_entry>> power_rows;
-        const auto power_action_entry = [&](std::string label, const char* cmd) {
-            return make_simple<menu::action_menu_entry>(std::move(label), asset_directory/"icons/icon_category_power.png", loader,
+        const auto power_action_entry = [&](std::string label, const char* icon, const char* cmd) {
+            return make_simple<menu::action_menu_entry>(std::move(label), asset_directory/"icons"/icon, loader,
                 [cmd] {
                     const int rc = std::system(cmd);
                     return rc == 0 ? result::success : result::unsupported;
                 });
         };
-        power_rows.push_back(power_action_entry("Sleep", "systemctl suspend"));
-        power_rows.push_back(power_action_entry("Restart", "systemctl reboot"));
-        power_rows.push_back(power_action_entry("Power Off", "systemctl poweroff"));
+        power_rows.push_back(power_action_entry("Sleep", "icon_action_suspend.png", "systemctl suspend"));
+        power_rows.push_back(power_action_entry("Restart", "icon_action_reboot.png", "systemctl reboot"));
+        power_rows.push_back(power_action_entry("Power Off", "icon_action_poweroff.png", "systemctl poweroff"));
         menus.push_back(panel_menu("Power", asset_directory/"icons/icon_category_power.png", std::move(power_rows)));
     }
     if(!config::CONFIG.hidden_category("settings"))
