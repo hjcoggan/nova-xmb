@@ -11,6 +11,10 @@ module;
 #include <sstream>
 #include <string>
 #include <vector>
+#ifndef _WIN32
+#include <sys/statvfs.h>
+#include <sys/utsname.h>
+#endif
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -56,10 +60,40 @@ std::vector<std::pair<std::string,std::string>> hardware(shell* shell) {
     }
     rows.emplace_back("Operating System","Windows ("+std::string(SDL_GetPlatform())+")");
 #else
+    std::string device_model;
+    {
+        std::ifstream dt("/proc/device-tree/model");
+        if(std::getline(dt,device_model)) {
+            while(!device_model.empty()&&device_model.back()=='\0') device_model.pop_back();
+        }
+    }
+    if(!device_model.empty()) rows.emplace_back("Device",device_model);
+    else {
+        std::ifstream cpu("/proc/cpuinfo");std::string line;
+        while(std::getline(cpu,line))if(line.starts_with("model name")) {rows.emplace_back("Processor",line.substr(line.find(':')+2));break;}
+    }
     rows.emplace_back("CPU Threads",std::to_string(SDL_GetCPUCount()));
     rows.emplace_back("Installed Memory",decimal(SDL_GetSystemRAM()/1024.0)+" GiB");
-    rows.emplace_back("Operating System",SDL_GetPlatform());
-    std::ifstream cpu("/proc/cpuinfo");std::string line;while(std::getline(cpu,line))if(line.starts_with("model name")) {rows.emplace_back("Processor",line.substr(line.find(':')+2));break;}
+    struct statvfs fs{};
+    if(::statvfs("/",&fs)==0&&fs.f_blocks>0) {
+        const double total_gib=(static_cast<double>(fs.f_blocks)*fs.f_frsize)/1073741824.0;
+        const double free_gib=(static_cast<double>(fs.f_bavail)*fs.f_frsize)/1073741824.0;
+        rows.emplace_back("Storage",decimal(free_gib)+" GiB free / "+decimal(total_gib)+" GiB");
+    }
+    std::string os_name;
+    {
+        std::ifstream os("/etc/os-release");std::string line;
+        while(std::getline(os,line)) {
+            if(line.starts_with("PRETTY_NAME=")) {
+                os_name=line.substr(12);
+                if(os_name.size()>=2&&os_name.front()=='"'&&os_name.back()=='"') os_name=os_name.substr(1,os_name.size()-2);
+                break;
+            }
+        }
+    }
+    rows.emplace_back("Operating System",os_name.empty()?std::string(SDL_GetPlatform()):os_name);
+    struct utsname uts{};
+    if(::uname(&uts)==0) rows.emplace_back("Kernel",uts.release);
 #endif
     const auto gpu=shell->get_window()->physicalDevice.getProperties();
     rows.emplace_back("Graphics Processor",gpu.deviceName.data());
@@ -114,7 +148,7 @@ public:
             c.rect(220,180,1480,680,{0,0,0,0.38F});
             icons_.box(c,"branding/openxmb",740,45,440,120);
             c.text("System Information",960,240,32,{1,1,1,1},0,true);
-            float y=315;for(const auto& [label,value]:rows_) {c.text(::openxmb::localization::shell_locale::translate(label),290,y,24,{1,1,1,0.75F});c.text(value,760,y,24);y+=46;}
+            float y=300;for(const auto& [label,value]:rows_) {c.text(::openxmb::localization::shell_locale::translate(label),290,y,24,{1,1,1,0.75F});c.text(value,760,y,24);y+=45;}
         }
         const auto previous_scale=renderer.text_scale;renderer.text_scale=1.0F;
         shell->render_controller_buttons(renderer,0.5F,0.94F,std::array{std::pair{page_?action::up:action::down,page_?"About":"System Information"},std::pair{action::options,"Licenses"},std::pair{action::cancel,"Back"}});
