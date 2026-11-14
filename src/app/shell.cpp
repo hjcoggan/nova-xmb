@@ -833,8 +833,9 @@ namespace app
                 }
             } catch(const std::exception& error) { spdlog::warn("Theme animation failed: {}",error.what()); }
         }
+        const bool overlay_ingame = ingame_mode || has_pause_overlay();
 #if OPENXMB_ENABLE_VIDEO_PLAYER
-        const bool background_video_active=!background_video_path.empty() && !ingame_mode &&
+        const bool background_video_active=!background_video_path.empty() && !overlay_ingame &&
             (config::CONFIG.backgroundType==config::config::background_type::video || theme->frame.background==background_video_path);
         video_background_render->set_active(background_video_active);
         video_background_render->tick();
@@ -907,8 +908,8 @@ namespace app
                 glm::vec3 c = themeColour.shaded_colour;
                 color = vk::ClearColorValue(std::array<float, 4>{ c.r, c.g, c.b, 1.0f });
             }
-            if(ingame_mode) {
-                color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.5f});
+            if(overlay_ingame) {
+                color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f});
             }
             std::array<vk::ClearValue, 3> background_clears{color, color, color};
             const auto depth_index = win->config.sampleCount == vk::SampleCountFlagBits::e1 ? 1u : 2u;
@@ -925,7 +926,7 @@ namespace app
 
             const auto boot = startup_sample();
 
-            if(!ingame_mode) {
+            if(!overlay_ingame) {
                 if(music_scene||music_mix>0.001F||config::CONFIG.backgroundType == config::config::background_type::original) {
                     if(can_render_monthly_background) {
                         try {
@@ -999,8 +1000,8 @@ namespace app
         const auto menu_blur_radius = background_only ? 0.0F : media_motion::backdrop(menu.background_blur_px(),opaque_scene);
         const auto menu_dim_alpha = background_only ? 0.0F : media_motion::backdrop(menu.background_dim_alpha(),opaque_scene);
         const bool use_menu_blur_background = menu_blur_radius > 0.05F;
-        const bool use_blur_background = blur_background || blur_background_progress < 1.0 ||
-            use_startup_blur_background || use_menu_blur_background;
+        const bool use_blur_background = !overlay_ingame && (blur_background || blur_background_progress < 1.0 ||
+            use_startup_blur_background || use_menu_blur_background);
         vk::ImageView compositedBackgroundView = backgroundResolve[frame]->imageView.get();
         if(use_blur_background) {
             ensure_blur(frame);
@@ -1517,10 +1518,12 @@ namespace app
             const double dim_seconds=dim_setting=="1 minute"?60:dim_setting=="5 minutes"?300:dim_setting=="10 minutes"?600:0;
             const bool dimmed=dim_seconds>0&&std::chrono::duration<double>(std::chrono::steady_clock::now()-last_activity).count()>dim_seconds;
             const float brightness=std::clamp(static_cast<float>(config::CONFIG.number("display.brightness",1))*(dimmed?0.3F:1.0F),0.0F,1.2F);
-            image_render->renderImageSized(commandBuffer, frame, shellRenderPass.get(), compositedBackgroundView,
-                0.0f, 0.0f, static_cast<int>(win->swapchainExtent.width), static_cast<int>(win->swapchainExtent.height),glm::vec4(brightness,brightness,brightness,1.0F));
+            if(!overlay_ingame) {
+                image_render->renderImageSized(commandBuffer, frame, shellRenderPass.get(), compositedBackgroundView,
+                    0.0f, 0.0f, static_cast<int>(win->swapchainExtent.width), static_cast<int>(win->swapchainExtent.height),glm::vec4(brightness,brightness,brightness,1.0F));
+            }
             gui_renderer ctx(commandBuffer, frame, shellRenderPass.get(), win->swapchainExtent, font_render.get(), image_render.get(), simple_render.get());
-            if(menu_dim_alpha > 0.001F) {
+            if(!overlay_ingame && menu_dim_alpha > 0.001F) {
                 ctx.draw_rect(glm::vec2{0.0F, 0.0F}, glm::vec2{1.0F, 1.0F},
                     glm::vec4{0.0F, 0.0F, 0.0F, menu_dim_alpha});
             }
