@@ -502,6 +502,7 @@ set(XMS_SOURCES
   src/app/components/main_menu.cpp
   src/app/components/message_overlay.cpp
   src/app/components/news_display.cpp
+  src/app/components/pause_overlay.cpp
   src/app/components/progress_overlay.cpp
   src/app/components/startup_overlay.cpp
   src/app/layers/blur_layer.cpp
@@ -526,6 +527,7 @@ set(XMS_MODULE_SOURCES
   src/app/components/main_menu.cppm
   src/app/components/message_overlay.cppm
   src/app/components/news_display.cppm
+  src/app/components/pause_overlay.cppm
   src/app/components/progress_overlay.cppm
   src/app/components/startup_overlay.cppm
   src/app/layers/blur_layer.cppm

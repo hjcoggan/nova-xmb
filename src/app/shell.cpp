@@ -58,7 +58,13 @@ module;
 #include "../localization/font_selection.hpp"
 #include "openxmb/integrations/desktop.hpp"
 #include "openxmb/themes/library.hpp"
+#include <csignal>
+#include <cstring>
+#include <fcntl.h>
 #include <map>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
 
 module openxmb.app;
 
@@ -78,6 +84,7 @@ import openxmb.xmb.captured_wave_renderer;
 import openxmb.xmb.monthly_background_renderer;
 import :startup_overlay;
 import :message_overlay;
+import :pause_overlay;
 import :programs;
 import :theme_manager;
 import :menu_utils;
@@ -203,13 +210,110 @@ namespace app
         renderer.text_scale = saved_scale;
     }
 
+    namespace {
+        volatile std::sig_atomic_t nova_pause_sigusr1_pending = 0;
+
+        void nova_handle_sigusr1(int) {
+            nova_pause_sigusr1_pending = 1;
+        }
+    }
+
     shell::shell(window* window) : phase(window),theme(std::make_unique<theme_state>())
     {
+        struct sigaction sa{};
+        sa.sa_handler = nova_handle_sigusr1;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = SA_RESTART;
+        sigaction(SIGUSR1, &sa, nullptr);
+
+        const char* env_sock = std::getenv("NOVA_PAUSE_SOCKET");
+        pause_sock_path = (env_sock && *env_sock)
+            ? std::string(env_sock)
+            : ("/run/user/" + std::to_string(static_cast<unsigned long>(getuid())) + "/nova-pause.sock");
+        if (pause_sock_path.size() < sizeof(sockaddr_un::sun_path)) {
+            int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+            if (fd >= 0) {
+                unlink(pause_sock_path.c_str());
+                sockaddr_un addr{};
+                addr.sun_family = AF_UNIX;
+                std::snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", pause_sock_path.c_str());
+                if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0 &&
+                    listen(fd, 8) == 0) {
+                    pause_sock_fd = fd;
+                } else {
+                    close(fd);
+                    pause_sock_path.clear();
+                }
+            }
+        }
     }
 
     shell::~shell()
     {
+        if (pause_sock_fd >= 0) {
+            close(pause_sock_fd);
+            pause_sock_fd = -1;
+        }
+        if (!pause_sock_path.empty()) {
+            unlink(pause_sock_path.c_str());
+            pause_sock_path.clear();
+        }
         openxmb::music::service().shutdown();
+    }
+
+    void shell::poll_pause_ipc()
+    {
+        auto open_pause = [this](const std::string& game_id) {
+            for (unsigned int i = 0; i < overlays.size(); ++i) {
+                if (dynamic_cast<app::pause_overlay*>(overlays[i].get()) != nullptr) {
+                    return;
+                }
+            }
+            emplace_overlay<app::pause_overlay>(game_id);
+        };
+        auto close_pause = [this]() {
+            for (unsigned int i = 0; i < overlays.size(); ++i) {
+                if (dynamic_cast<app::pause_overlay*>(overlays[i].get()) != nullptr) {
+                    remove_overlay(i);
+                    break;
+                }
+            }
+        };
+
+        if (pause_sock_fd >= 0) {
+            for (;;) {
+                int client = accept4(pause_sock_fd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+                if (client < 0) {
+                    break;
+                }
+                char buf[256]{};
+                ssize_t n = read(client, buf, sizeof(buf) - 1);
+                close(client);
+                if (n <= 0) {
+                    continue;
+                }
+                std::string msg(buf, static_cast<std::size_t>(n));
+                while (!msg.empty() && (msg.back() == '\n' || msg.back() == '\r' || msg.back() == ' ')) {
+                    msg.pop_back();
+                }
+                if (msg == "PAUSE") {
+                    open_pause("");
+                } else if (msg.rfind("PAUSE ", 0) == 0) {
+                    open_pause(msg.substr(6));
+                } else if (msg == "RESUME" || msg == "QUIT") {
+                    close_pause();
+                }
+            }
+        }
+
+        if (nova_pause_sigusr1_pending) {
+            nova_pause_sigusr1_pending = 0;
+            if (has_pause_overlay()) {
+                close_pause();
+            } else {
+                open_pause("");
+            }
+        }
     }
 
     void shell::preload()
@@ -1935,7 +2039,8 @@ namespace app
                 if(wanted_device!=active_audio_device)set_audio_device(wanted_device);
             }
         }
-        const bool child_active=menu::has_active_child();
+        poll_pause_ipc();
+        const bool child_active=menu::has_active_child()&&!has_pause_overlay();
         const bool focused=!child_active&&(win->config.headless||(SDL_GetWindowFlags(win->win.get())&SDL_WINDOW_INPUT_FOCUS)!=0);
         const auto cap=config::CONFIG.maxFPS>10000?0:config::CONFIG.maxFPS;
         win->config.fpsLimit=child_active?1.0:(focused?cap:config::CONFIG.number("power.background.fps",30));
@@ -2022,7 +2127,7 @@ namespace app
     }
 
     void shell::dispatch(const event& event) {
-        if(menu::has_active_child()) return;
+        if(menu::has_active_child()&&!has_pause_overlay()) return;
         if(event.action!=action::none||event.get<events::key_down>()||event.get<events::controller_button_down>()||event.get<events::mouse_move>()) last_activity=std::chrono::steady_clock::now();
         // A held dismissal must not auto-repeat into the revealed menu.
         if(startup_dismiss_button) {

@@ -58,6 +58,7 @@ import :choice_overlay;
 import :main_menu;
 import :message_overlay;
 import :news_display;
+import :pause_overlay;
 import :progress_overlay;
 import :startup_overlay;
 
@@ -178,6 +179,14 @@ namespace app
                 return old_overlay &&
                     dynamic_cast<app::choice_overlay*>(old_overlay.get()) != nullptr;
             }
+            bool has_pause_overlay() const {
+                for(const auto& overlay : overlays) {
+                    if(dynamic_cast<app::pause_overlay*>(overlay.get()) != nullptr) {
+                        return true;
+                    }
+                }
+                return false;
+            }
 
             app::component* push_overlay(std::unique_ptr<app::component>&& component) {
                 auto ptr = component.get();
@@ -190,8 +199,9 @@ namespace app
                     overlay_fade_time = std::chrono::steady_clock::now() - overlay_transition_duration;
                 }
 
-                // Auto-enable background blur for modal message overlays + play question sound
-                if(dynamic_cast<app::message_overlay*>(ptr) != nullptr) {
+                // Auto-enable background blur for modal message/pause overlays + play question sound
+                if(dynamic_cast<app::message_overlay*>(ptr) != nullptr ||
+                   dynamic_cast<app::pause_overlay*>(ptr) != nullptr) {
                     set_blur_background(true);
                     if(question_sound && sdl::mix::PlayChannel(-1, question_sound.get(), 0) == -1) {
                         spdlog::debug("PlayChannel(question): {}", sdl::mix::GetError());
@@ -212,7 +222,8 @@ namespace app
                     overlay_fade_time = std::chrono::steady_clock::now() - overlay_transition_duration;
                 }
 
-                if(dynamic_cast<app::message_overlay*>(ptr) != nullptr) {
+                if(dynamic_cast<app::message_overlay*>(ptr) != nullptr ||
+                   dynamic_cast<app::pause_overlay*>(ptr) != nullptr) {
                     set_blur_background(true);
                     if(question_sound && sdl::mix::PlayChannel(-1, question_sound.get(), 0) == -1) {
                         spdlog::debug("PlayChannel(question): {}", sdl::mix::GetError());
@@ -233,13 +244,17 @@ namespace app
                 }
                 overlays.erase(overlays.begin()+index);
 
-                // Disable blur when no more message overlays are present (including fading old_overlay)
+                // Disable blur when no more message/pause overlays are present (including fading old_overlay)
                 auto has_msg = false;
                 for(auto& ov : overlays) {
-                    if(dynamic_cast<app::message_overlay*>(ov.get()) != nullptr) { has_msg = true; break; }
+                    if(dynamic_cast<app::message_overlay*>(ov.get()) != nullptr ||
+                       dynamic_cast<app::pause_overlay*>(ov.get()) != nullptr) { has_msg = true; break; }
                 }
                 if(!has_msg) {
-                    if(old_overlay && dynamic_cast<app::message_overlay*>(old_overlay.get()) != nullptr && overlay_fade_direction == transition_direction::out) {
+                    if(old_overlay &&
+                       (dynamic_cast<app::message_overlay*>(old_overlay.get()) != nullptr ||
+                        dynamic_cast<app::pause_overlay*>(old_overlay.get()) != nullptr) &&
+                       overlay_fade_direction == transition_direction::out) {
                         // keep blur until fade-out completes
                     } else {
                         set_blur_background(false);
@@ -379,6 +394,10 @@ namespace app
             transition_direction overlay_fade_direction{};
             time_point overlay_fade_time;
             std::unique_ptr<app::component> old_overlay;
+
+            void poll_pause_ipc();
+            int pause_sock_fd = -1;
+            std::string pause_sock_path;
 
             std::optional<clipboard> clipboard;
 
