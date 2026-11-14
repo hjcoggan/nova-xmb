@@ -133,10 +133,20 @@ void write_brightness_pct(int pct) {
     }
     const int max_b = std::max(1, read_int_file(dir / "max_brightness", 100));
     const int raw = std::clamp(static_cast<int>(std::lround(max_b * (pct / 100.0))), 1, max_b);
-    std::ofstream out(dir / "brightness");
-    if (out) {
-        out << raw << '\n';
+    {
+        std::ofstream out(dir / "brightness");
+        if (out) {
+            out << raw << '\n';
+            if (out.good()) {
+                return;
+            }
+        }
     }
+    // The brightness node is root-owned (0644) and the shell runs as the
+    // console user, so a direct write silently fails; use passwordless sudo.
+    const std::string cmd = "printf '%d\\n' " + std::to_string(raw) +
+        " | sudo -n tee " + (dir / "brightness").string() + " >/dev/null 2>&1";
+    (void)std::system(cmd.c_str());
 }
 
 void run_nova_home_ctl(const char* verb, const std::string& game_id) {

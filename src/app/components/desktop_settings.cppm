@@ -15,6 +15,8 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 }
 #include <nlohmann/json.hpp>
+#include <cstdio>
+#include <cstdlib>
 #include "openxmb/integrations/desktop.hpp"
 #include <SDL2/SDL.h>
 #undef main
@@ -86,6 +88,71 @@ private:
 
 namespace app::desktop_settings {
 using namespace mfk::i18n::literals;
+// Nova hardware settings helpers (backlight / iwd / BlueZ / rfkill).
+inline std::string nova_run_read(const char* cmd) {
+    // NOTE: stdio (popen/fread/fgets) does not link in this module under the
+    // libc++ + fortify toolchain, so capture via a temp file instead.
+    static int counter=0;
+    const auto tmp=std::filesystem::temp_directory_path()/("nova-xmb-q-"+std::to_string(counter++));
+    if(std::system((std::string(cmd)+" >"+tmp.string()+" 2>/dev/null").c_str())!=0 && !std::filesystem::exists(tmp)) return {};
+    std::ifstream in(tmp);
+    std::string out((std::istreambuf_iterator<char>(in)),std::istreambuf_iterator<char>());
+    std::error_code ec;std::filesystem::remove(tmp,ec);
+    return out;
+}
+inline int nova_run_quiet(const std::string& cmd) {
+    return std::system((cmd+" >/dev/null 2>&1").c_str());
+}
+inline std::string nova_shell_quote(const std::string& text) {
+    std::string out="'";
+    for(const char ch:text) { if(ch=='\'') out+="'\\''"; else out+=ch; }
+    return out+"'";
+}
+inline std::filesystem::path nova_backlight_dir() {
+    const std::filesystem::path preferred("/sys/class/backlight/ae94000.dsi.0");
+    std::error_code ec;
+    if(std::filesystem::is_directory(preferred,ec)) return preferred;
+    for(const auto& entry:std::filesystem::directory_iterator("/sys/class/backlight",ec))
+        if(entry.is_directory(ec)||entry.is_symlink(ec)) return entry.path();
+    return {};
+}
+inline int nova_read_int(const std::filesystem::path& path,int fallback) {
+    std::ifstream in(path);int value=fallback;
+    return (in>>value)?value:fallback;
+}
+inline int nova_backlight_pct() {
+    const auto dir=nova_backlight_dir();
+    if(dir.empty()) return 50;
+    const int max_b=std::max(1,nova_read_int(dir/"max_brightness",100));
+    return std::clamp(static_cast<int>(std::lround(100.0*nova_read_int(dir/"brightness",max_b/2)/max_b)),1,100);
+}
+inline void nova_write_backlight_pct(int pct) {
+    const auto dir=nova_backlight_dir();
+    if(dir.empty()) return;
+    const int max_b=std::max(1,nova_read_int(dir/"max_brightness",100));
+    const int raw=std::clamp(static_cast<int>(std::lround(max_b*(std::clamp(pct,5,100)/100.0))),1,max_b);
+    { std::ofstream out(dir/"brightness"); if(out) { out<<raw<<'\n'; if(out.good()) return; } }
+    // The panel brightness node is root-owned (0644); the shell runs as the
+    // console user, so fall back to passwordless sudo like the pause menu.
+    nova_run_quiet("printf '%d\\n' "+std::to_string(raw)+" | sudo -n tee "+(dir/"brightness").string());
+}
+inline bool nova_wifi_powered() {
+    const auto out=nova_run_read("iwctl device wlan0 show 2>/dev/null");
+    const auto pos=out.find("Powered");
+    return pos!=std::string::npos && out.find("on",pos)!=std::string::npos;
+}
+inline std::string nova_wifi_network() {
+    const auto out=nova_run_read("iwctl station wlan0 show 2>/dev/null");
+    const auto pos=out.find("Connected network");
+    if(pos==std::string::npos) return {};
+    auto line=out.substr(pos+std::string("Connected network").size());
+    line=line.substr(0,line.find('\n'));
+    const auto first=line.find_first_not_of(" \t");
+    return first==std::string::npos?std::string{}:line.substr(first);
+}
+inline bool nova_bt_powered() {
+    return nova_run_read("bluetoothctl show 2>/dev/null").find("Powered: yes")!=std::string::npos;
+}
 export std::string value(const std::string& key,shell* host=nullptr) {
     const auto& c=config::CONFIG;
     const auto hex=[](const auto& color) {std::string value="#000000";constexpr char digits[]="0123456789abcdef";for(int i=0;i<3;++i){const auto byte=std::clamp(static_cast<int>(color[i]*255+0.5F),0,255);value[1+i*2]=digits[byte>>4];value[2+i*2]=digits[byte&15];}return value;};
@@ -124,6 +191,11 @@ export std::string value(const std::string& key,shell* host=nullptr) {
     if(key=="about") return "OpenXMB " OPENXMB_VERSION_STRING;
     if(key=="system.name") return c.preference(key,"OpenXMB system");
     if(key=="autostart") return c.autostart?"On":"Off";
+    if(key=="display.screen.brightness") return std::to_string(nova_backlight_pct());
+    if(key=="network.wifi") return nova_wifi_powered()?"On":"Off";
+    if(key=="network.wifi.join") {const auto net=nova_wifi_network();return net.empty()?std::string("Not connected"):net;}
+    if(key=="network.bluetooth") return nova_bt_powered()?"On":"Off";
+    if(key=="network.aeroplane") return (!nova_wifi_powered()&&!nova_bt_powered())?"On":"Off";
     const auto saved=c.preference(key);if(!saved.empty()) return saved;
     if(key=="audio.device") return "System Default";
     if(key=="browser.homepage") return "https://duckduckgo.com";
@@ -168,6 +240,10 @@ void apply(shell* shell,const std::string& key,const std::string& selected) {
         if(!automatic&&!hex){show_error(shell,"Use a six-digit hexadecimal colour such as #ffeefc.");return;}
     }
     if(key=="browser.homepage") {const auto checked=openxmb::integrations::validate_browser_url(selected);if(!checked){show_error(shell,checked.message);return;}}
+    if(key=="display.screen.brightness") {nova_write_backlight_pct(std::stoi(selected));return;}
+    if(key=="network.wifi") {nova_run_quiet(std::string("iwctl device wlan0 set-property Powered ")+(selected=="On"?"on":"off"));return;}
+    if(key=="network.bluetooth") {nova_run_quiet(std::string("bluetoothctl power ")+(selected=="On"?"on":"off"));return;}
+    if(key=="network.aeroplane") {nova_run_quiet(selected=="On"?"rfkill block all":"rfkill unblock all");return;}
     if(key=="system.name") SDL_SetWindowTitle(window->win.get(),selected.c_str());
     if(key=="language") {c.setLanguage(selected);c.save_config();return;}
     if(key=="text.scale") {c.textScale=std::stod(selected);shell->reload_fonts();}
@@ -244,6 +320,18 @@ export void activate(shell* shell,const openxmb::xmb::CatalogNode& node) {
     if(key=="licenses") {shell->open_panel("licenses");return;}
     if(key=="browser.clear") {shell->emplace_overlay<message_overlay>("Clear Browsing Data?","Remove browser cookies, site storage and cached pages?",std::vector<std::string>{"No","Yes"},[](unsigned i){if(i) {config::CONFIG.preferences["browser.clear_site_data"]=std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());config::CONFIG.save_config();}});return;}
     if(key=="reset") {shell->emplace_overlay<message_overlay>("Restore Default Settings?","Restore this profile's preferences? Your media files will be preserved.",std::vector<std::string>{"No","Yes"},[shell](unsigned i){if(i) {apply(shell,"autostart","Off");shell->reset_settings();}});return;}
+    if(key=="network.wifi.join") {
+        shell->emplace_overlay<text_entry_overlay>("Wi-Fi network name (SSID)","",[shell](std::string ssid){
+            if(ssid.empty()) return;
+            shell->emplace_overlay<text_entry_overlay>("Wi-Fi password (blank for open)","",[shell,ssid](std::string psk){
+                std::string cmd="iwctl station wlan0 connect "+nova_shell_quote(ssid);
+                if(!psk.empty()) cmd+=" --passphrase "+nova_shell_quote(psk);
+                if(nova_run_quiet(cmd)!=0) show_error(shell,"Could not connect to "+ssid+". Check the name and password.");
+                else shell->reload_menu();
+            });
+        });
+        return;
+    }
     if(key=="music.rescan") {shell->reload_menu();return;}
     if(key=="games.rescan") {openxmb::desktop::Library library;const auto count=library.scan_games();show_error(shell,"Added "+std::to_string(count)+" games to the library.");return;}
     if(key=="games.emulation") {shell->open_panel("emulation");return;}
