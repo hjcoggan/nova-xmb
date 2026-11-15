@@ -142,15 +142,31 @@ inline int nova_exec_capture(const std::vector<std::string>& args,std::string& s
     }
     ::close(pipefd[1]);
     if(pid<0) { ::close(pipefd[0]); return -1; }
+    // Status commands should be small; cap memory while still draining the pipe.
+    constexpr std::size_t max_stdout_bytes=16U*1024U*1024U;
+    bool output_too_large=false;
+    bool read_failed=false;
     char buf[4096];
     for(;;) {
         const ssize_t n=nova_read_fd(pipefd[0],buf,sizeof(buf));
-        if(n>0) stdout_out.append(buf,static_cast<std::size_t>(n));
-        else if(n==0 || (n<0 && errno!=EINTR)) break;
+        if(n>0) {
+            const auto count=static_cast<std::size_t>(n);
+            const auto available=max_stdout_bytes-stdout_out.size();
+            const auto kept=std::min(count,available);
+            stdout_out.append(buf,kept);
+            if(kept<count) output_too_large=true;
+        }
+        else if(n==0) break;
+        else if(errno!=EINTR) { read_failed=true; break; }
     }
     ::close(pipefd[0]);
     int status=0;
-    while(::waitpid(pid,&status,0)<0 && errno==EINTR) {}
+    pid_t waited;
+    do { waited=::waitpid(pid,&status,0); } while(waited<0 && errno==EINTR);
+    if(output_too_large || read_failed || waited<0) {
+        stdout_out.clear();
+        return -1;
+    }
     return WIFEXITED(status)?WEXITSTATUS(status):-1;
 #endif
 }
