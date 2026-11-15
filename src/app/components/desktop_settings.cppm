@@ -34,6 +34,7 @@ extern "C" {
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -605,64 +606,127 @@ class nova_update_item final : public progress_item {
             return status::running;
         }
     private:
+        // JSON escaping can expand a 1 MiB producer detail to roughly 6 MiB.
+        static constexpr std::size_t max_event_line_bytes=8U*1024U*1024U;
+
+        void reject_oversized_event() {
+            std::lock_guard<std::mutex> lock(mutex);
+            if(!failed && !done_event && !finished) {
+                failed=true;
+                last_message="System update emitted an oversized event.";
+            }
+        }
+        void reject_invalid_event() {
+            std::lock_guard<std::mutex> lock(mutex);
+            if(!failed && !done_event && !finished) {
+                failed=true;
+                last_message="nova-update emitted an invalid event.";
+            }
+        }
         void handle_line(std::string line) {
             while(!line.empty() && (line.back()=='\n' || line.back()=='\r')) line.pop_back();
             if(line.empty()) return;
             const auto parsed=nlohmann::json::parse(line,nullptr,false);
-            if(parsed.is_discarded() || !parsed.is_object()) return;
-            std::lock_guard<std::mutex> lock(mutex);
-            const auto event=parsed.value("event",std::string{});
-            const auto detail=parsed.value("detail",std::string{});
-            if(event=="progress") {
-                const int index=parsed.value("index",0);
-                const int total=parsed.value("total",0);
-                if(total>0) step_progress=std::max(0,index-1)/static_cast<double>(total);
-                last_message=total>0?std::format("Step {} of {}: {}",index,total,detail):detail;
-            } else if(event=="note") {
-                if(!detail.empty()) last_message=detail;
-            } else if(event=="error") {
-                last_message=detail.empty()?"System update failed.":detail;
-                failed=true;
-            } else if(event=="done") {
-                step_progress=1.0;
-                last_message=detail.empty()?"System is up to date.":detail;
-                finished=true;
+            if(parsed.is_discarded() || !parsed.is_object()) {
+                reject_invalid_event();
+                return;
+            }
+            try {
+                std::lock_guard<std::mutex> lock(mutex);
+                if(failed || done_event || finished) return;
+                const auto event=parsed.value("event",std::string{});
+                const auto detail=parsed.value("detail",std::string{});
+                if(event=="progress") {
+                    const int index=parsed.value("index",0);
+                    const int total=parsed.value("total",0);
+                    if(total>0) step_progress=std::max(0,index-1)/static_cast<double>(total);
+                    last_message=total>0?std::format("Step {} of {}: {}",index,total,detail):detail;
+                } else if(event=="note") {
+                    if(!detail.empty()) last_message=detail;
+                } else if(event=="error") {
+                    last_message=detail.empty()?"System update failed.":detail;
+                    failed=true;
+                } else if(event=="done") {
+                    const auto ok=parsed.find("ok");
+                    if(ok==parsed.end() || !ok->is_boolean()) {
+                        failed=true;
+                        last_message="nova-update emitted an invalid completion event.";
+                    } else if(!ok->get<bool>()) {
+                        last_message=detail.empty()?"System update failed.":detail;
+                        failed=true;
+                    } else {
+                        step_progress=1.0;
+                        last_message=detail.empty()?"System is up to date.":detail;
+                        done_event=true;
+                    }
+                }
+            } catch(const nlohmann::json::exception&) {
+                reject_invalid_event();
             }
         }
         void read_events() {
 #ifndef _WIN32
             std::string pending;
+            bool discarding_oversized_line=false;
             char buf[1024];
             for(;;) {
                 const ssize_t n=nova_read_fd(read_fd,buf,sizeof(buf));
                 if(n>0) {
-                    pending.append(buf,static_cast<std::size_t>(n));
+                    if(discarding_oversized_line) {
+                        const auto nl=std::string_view(buf,static_cast<std::size_t>(n)).find('\n');
+                        if(nl==std::string_view::npos) continue;
+                        discarding_oversized_line=false;
+                        if(nl+1<static_cast<std::size_t>(n)) pending.append(buf+nl+1,static_cast<std::size_t>(n)-nl-1);
+                    } else {
+                        pending.append(buf,static_cast<std::size_t>(n));
+                    }
+                    std::size_t consumed=0;
                     for(;;) {
-                        const auto nl=pending.find('\n');
-                        if(nl==std::string::npos) break;
-                        auto line=pending.substr(0,nl);
-                        pending.erase(0,nl+1);
+                        const auto nl=pending.find('\n',consumed);
+                        if(nl==std::string::npos) {
+                            if(pending.size()-consumed>max_event_line_bytes) {
+                                pending.clear();
+                                discarding_oversized_line=true;
+                                reject_oversized_event();
+                            }
+                            break;
+                        }
+                        if(nl-consumed>max_event_line_bytes) {
+                            reject_oversized_event();
+                            consumed=nl+1;
+                            continue;
+                        }
+                        auto line=pending.substr(consumed,nl-consumed);
+                        consumed=nl+1;
                         handle_line(std::move(line));
                     }
+                    if(consumed>0) pending.erase(0,consumed);
                 } else if(n==0 || (n<0 && errno!=EINTR)) {
                     break;
                 }
             }
             ::close(read_fd);
             read_fd=-1;
-            handle_line(std::move(pending));
+            if(!discarding_oversized_line) handle_line(std::move(pending));
             int raw=0;
-            while(::waitpid(child_pid,&raw,0)<0 && errno==EINTR) {}
-            const int code=WIFEXITED(raw)?WEXITSTATUS(raw):-1;
+            pid_t waited;
+            do { waited=::waitpid(child_pid,&raw,0); } while(waited<0 && errno==EINTR);
             std::lock_guard<std::mutex> lock(mutex);
-            if(failed || finished) return;
-            if(code!=0) {
+            if(failed) return;
+            if(waited<0) {
                 failed=true;
-                last_message=code>0?std::format("nova-update failed with exit code {}.",code):"nova-update could not be started.";
+                last_message="Could not wait for nova-update to finish.";
+            } else if(!WIFEXITED(raw)) {
+                failed=true;
+                last_message="nova-update was terminated unexpectedly.";
+            } else if(WEXITSTATUS(raw)!=0) {
+                failed=true;
+                last_message=std::format("nova-update failed with exit code {}.",WEXITSTATUS(raw));
+            } else if(!done_event) {
+                failed=true;
+                last_message="nova-update exited without a completion event.";
             } else {
                 finished=true;
-                step_progress=1.0;
-                if(last_message.empty()) last_message="System update finished.";
             }
 #endif
         }
@@ -672,6 +736,7 @@ class nova_update_item final : public progress_item {
         long child_pid=-1;
         std::optional<double> step_progress;
         std::string last_message="Checking for system updates...";
+        bool done_event=false;
         bool finished=false;
         bool failed=false;
 };
