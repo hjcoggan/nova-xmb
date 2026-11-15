@@ -620,6 +620,7 @@ class nova_update_item final : public progress_item {
             const auto parsed=nlohmann::json::parse(line,nullptr,false);
             if(parsed.is_discarded() || !parsed.is_object()) return;
             std::lock_guard<std::mutex> lock(mutex);
+            if(failed) return;
             const auto event=parsed.value("event",std::string{});
             const auto detail=parsed.value("detail",std::string{});
             if(event=="progress") {
