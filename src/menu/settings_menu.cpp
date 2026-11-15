@@ -72,7 +72,7 @@ namespace menu {
 
             status init(std::string& message) override {
                 message = "Updating..."_();
-                start_time = std::chrono::system_clock::now();
+                start_time = std::chrono::steady_clock::now();
 
                 int pid = fork();
                 if(pid < 0) {
@@ -90,7 +90,7 @@ namespace menu {
             }
 
             status progress(double& progress, std::string& message) override {
-                auto now = std::chrono::system_clock::now();
+                auto now = std::chrono::steady_clock::now();
                 if(now - start_time < wait_duration) {
                     // We have no idea about the actual progress, so we will just lie.
                     // I hate appimageupdatetool.
@@ -116,7 +116,7 @@ namespace menu {
             }
         private:
             pid_t pid{};
-            std::chrono::time_point<std::chrono::system_clock> start_time;
+            std::chrono::steady_clock::time_point start_time;
             constexpr static auto wait_duration = std::chrono::seconds(2);
     };
 
@@ -126,7 +126,7 @@ namespace menu {
 
             status init(std::string& message) override {
                 message = "Checking for updates..."_();
-                start_time = std::chrono::system_clock::now();
+                start_time = std::chrono::steady_clock::now();
 
                 int pid = fork();
                 if(pid < 0) {
@@ -143,7 +143,7 @@ namespace menu {
                 }
             }
             status progress(double& progress, std::string& message) override {
-                auto now = std::chrono::system_clock::now();
+                auto now = std::chrono::steady_clock::now();
                 if(now - start_time < wait_duration) {
                     progress = utils::progress(now, start_time, wait_duration);
                     return status::running;
@@ -182,7 +182,7 @@ namespace menu {
             }
         private:
             pid_t pid{};
-            std::chrono::time_point<std::chrono::system_clock> start_time;
+            std::chrono::steady_clock::time_point start_time;
             constexpr static auto wait_duration = std::chrono::milliseconds(500);
             app::shell* xmb;
     };
