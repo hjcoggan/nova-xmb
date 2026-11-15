@@ -24,6 +24,7 @@ module;
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -55,6 +56,8 @@ namespace programs {
 
 using namespace app;
 
+constexpr std::size_t max_text_file_size = 64U * 1024U * 1024U;
+
 #if __linux__
 class mapped_memory {
     public:
@@ -64,12 +67,19 @@ class mapped_memory {
                 spdlog::error("Failed to open file {}: {}", path.string(), strerror(errno));
                 throw std::runtime_error("Failed to open file");
             }
-            m_size = lseek(m_fd, 0, SEEK_END);
-            if(m_size < 0) {
+            const off_t size = lseek(m_fd, 0, SEEK_END);
+            if(size < 0) {
                 spdlog::error("Failed to get size of file {}: {}", path.string(), strerror(errno));
                 close(m_fd);
+                m_fd = -1;
                 throw std::runtime_error("Failed to get file size");
             }
+            if(static_cast<std::uint64_t>(size) > max_text_file_size) {
+                close(m_fd);
+                m_fd = -1;
+                throw std::runtime_error("Text file exceeds the 64 MiB viewer limit");
+            }
+            m_size = static_cast<std::size_t>(size);
             if(m_size == 0) { m_data = nullptr; return; }
             m_data = mmap(nullptr, m_size, PROT_READ, MAP_PRIVATE, m_fd, 0);
             if(m_data == MAP_FAILED) {
@@ -131,6 +141,9 @@ class mapped_memory {
             if(size < 0) {
                 spdlog::error("Failed to get size of file {}: {}", path.string(), strerror(errno));
                 throw std::runtime_error("Failed to get file size");
+            }
+            if(static_cast<std::uint64_t>(size) > max_text_file_size) {
+                throw std::runtime_error("Text file exceeds the 64 MiB viewer limit");
             }
             file.seekg(0, std::ios::beg);
 
