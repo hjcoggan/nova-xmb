@@ -267,6 +267,7 @@ namespace app
 
     shell::~shell()
     {
+        drop_pause_still();
         if (pause_sock_fd >= 0) {
             if (win && win->config.wakeFd == pause_sock_fd) {
                 win->config.wakeFd = -1;
@@ -354,6 +355,10 @@ namespace app
         pause_capture.terminate();
         if (pause_still_loading.valid()) pause_still_loading.wait();
         pause_still_loading_started = false;
+        const char* runtime = std::getenv("XDG_RUNTIME_DIR");
+        const std::string path = std::string(runtime && *runtime ? runtime : "/tmp") + "/nova-pause-still.png";
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
         if (pause_still) {
             // The frame that last sampled it may still be in flight.
             device.waitIdle();
@@ -420,22 +425,25 @@ namespace app
                 } else if (msg == "RESUME") {
                     close_pause();
                 } else if (msg == "POWER_MENU") {
-                    static bool power_menu_open = false;
-                    if (!power_menu_open) {
-                        power_menu_open = true;
+                    const bool open = power_menu_overlay != nullptr &&
+                        std::ranges::any_of(overlays, [this](const auto& overlay) {
+                            return overlay.get() == power_menu_overlay;
+                        });
+                    if (!open) {
                         auto* ov = emplace_overlay<choice_overlay>(
                             std::vector<std::string>{"Sleep", "Restart", "Power Off", "Cancel"},
                             0,
-                            [](unsigned idx) {
-                                power_menu_open = false;
+                            [this](unsigned idx) {
+                                power_menu_overlay = nullptr;
                                 if (idx == 0) (void)std::system("systemctl suspend >/dev/null 2>&1 &");
                                 else if (idx == 1) (void)std::system("systemctl reboot >/dev/null 2>&1 &");
                                 else if (idx == 2) (void)std::system("systemctl poweroff >/dev/null 2>&1 &");
                             },
-                            []() {
-                                power_menu_open = false;
+                            [this]() {
+                                power_menu_overlay = nullptr;
                             });
                         ov->set_top_action("Power Menu");
+                        power_menu_overlay = ov;
                     }
                 }
             }

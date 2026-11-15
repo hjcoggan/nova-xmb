@@ -348,6 +348,7 @@ namespace app
             }
             void remove_overlay(unsigned int index) {
                 if(index >= overlays.size()) return;
+                if(overlays[index].get() == power_menu_overlay) power_menu_overlay = nullptr;
                 if(index == overlays.size()-1 && overlays[index]->do_fade_out()) {
                     overlay_fade_direction = transition_direction::out;
                     overlay_fade_time = std::chrono::steady_clock::now();
@@ -546,6 +547,7 @@ namespace app
             void drop_pause_still();
             [[nodiscard]] bool pause_still_drawn() const { return pause_backdrop.draw_still() && pause_still && pause_still->loaded; }
             std::string pause_sock_path;
+            app::component* power_menu_overlay = nullptr;
 
             std::optional<clipboard> clipboard;
 

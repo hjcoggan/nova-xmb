@@ -1,6 +1,7 @@
 module;
 #include "../../localization/ui_literal_text.hpp"
 #include "openxmb/xmb/catalog.hpp"
+#include "openxmb/xmb/iwctl_status.hpp"
 #include "../../localization/shell_locale.hpp"
 #include "../input_bindings.hpp"
 #include "openxmb/music/player.hpp"
@@ -131,7 +132,7 @@ inline int nova_exec_capture(const std::vector<std::string>& args,std::string& s
             if(devnull>STDERR_FILENO) ::close(devnull);
         }
         ::dup2(pipefd[1],STDOUT_FILENO);
-        ::close(pipefd[1]);
+        if(pipefd[1]!=STDOUT_FILENO) ::close(pipefd[1]);
         std::vector<char*> c_args;
         c_args.reserve(args.size()+1);
         for(const auto& s:args) c_args.push_back(const_cast<char*>(s.c_str()));
@@ -166,22 +167,10 @@ inline int nova_run_quiet(const std::string& cmd) {
     return nova_exec_quiet({"/bin/sh","-c",cmd});
 }
 inline std::string nova_strip_ansi(std::string_view input) {
-    std::string out;
-    out.reserve(input.size());
-    for(std::size_t i=0;i<input.size();++i) {
-        if(input[i]=='\x1b' && i+1<input.size() && input[i+1]=='[') {
-            i+=2;
-            while(i<input.size() && !(input[i]>='@' && input[i]<='~')) ++i;
-            continue;
-        }
-        out.push_back(input[i]);
-    }
-    return out;
+    return openxmb::xmb::strip_ansi(input);
 }
 inline std::string nova_trim(std::string_view sv) {
-    while(!sv.empty() && (sv.front()==' '||sv.front()=='\t'||sv.front()=='\r'||sv.front()=='\n')) sv.remove_prefix(1);
-    while(!sv.empty() && (sv.back()==' '||sv.back()=='\t'||sv.back()=='\r'||sv.back()=='\n')) sv.remove_suffix(1);
-    return std::string(sv);
+    return openxmb::xmb::trim_ascii(sv);
 }
 inline std::filesystem::path nova_brightness_state_path() {
     if(const char* xdg=std::getenv("XDG_STATE_HOME"); xdg && *xdg) {
@@ -401,19 +390,13 @@ inline std::vector<NovaBtDevice> nova_scan_bt_devices() {
 }
 inline bool nova_wifi_powered() {
     std::string out;
-    (void)nova_exec_capture({"iwctl","device",nova_wifi_device(),"show"},out);
-    const auto pos=out.find("Powered");
-    return pos!=std::string::npos && out.find("on",pos)!=std::string::npos;
+    if(nova_exec_capture({"iwctl","device",nova_wifi_device(),"show"},out)!=0 && out.empty()) return false;
+    return openxmb::xmb::parse_iwctl_powered(out);
 }
 inline std::string nova_wifi_network() {
     std::string out;
-    (void)nova_exec_capture({"iwctl","station",nova_wifi_device(),"show"},out);
-    const auto pos=out.find("Connected network");
-    if(pos==std::string::npos) return {};
-    auto line=out.substr(pos+std::string("Connected network").size());
-    line=line.substr(0,line.find('\n'));
-    const auto first=line.find_first_not_of(" \t");
-    return first==std::string::npos?std::string{}:line.substr(first);
+    if(nova_exec_capture({"iwctl","station",nova_wifi_device(),"show"},out)!=0 && out.empty()) return {};
+    return openxmb::xmb::parse_iwctl_connected_network(out);
 }
 inline bool nova_bt_powered() {
     return nova_run_read("bluetoothctl show 2>/dev/null").find("Powered: yes")!=std::string::npos;
@@ -559,7 +542,7 @@ class nova_update_item final : public progress_item {
                 }
                 ::dup2(pipefd[1],STDOUT_FILENO);
                 ::dup2(pipefd[1],STDERR_FILENO);
-                ::close(pipefd[1]);
+                if(pipefd[1]!=STDOUT_FILENO && pipefd[1]!=STDERR_FILENO) ::close(pipefd[1]);
                 const char* const argv[]={"nova-update","--json",nullptr};
                 ::execvp("nova-update",const_cast<char* const*>(argv));
                 ::_exit(127);
@@ -688,6 +671,7 @@ class nova_async_task_item final : public progress_item {
 void apply(shell* shell,const std::string& key,const std::string& selected) {
     nova_probe_cache.invalidate();
     auto& c=config::CONFIG;auto* window=shell->get_window();
+    const bool has_live_window=window!=nullptr && !window->config.headless && window->win;
     if(key=="theme.icon.color"||key=="theme.text.color"||key=="theme.particle.color") {
         const bool automatic=key=="theme.icon.color"&&(selected=="auto"||selected=="original");
         const bool hex=selected.size()==7&&selected.front()=='#'&&std::all_of(selected.begin()+1,selected.end(),[](unsigned char c){return std::isxdigit(c)!=0;});
@@ -706,12 +690,13 @@ void apply(shell* shell,const std::string& key,const std::string& selected) {
     if(key=="network.wifi") {nova_exec_quiet({"iwctl","device",nova_wifi_device(),"set-property","Powered",selected=="On"?"on":"off"});return;}
     if(key=="network.bluetooth") {nova_exec_quiet({"bluetoothctl","power",selected=="On"?"on":"off"});return;}
     if(key=="network.aeroplane") {nova_exec_quiet({"rfkill",selected=="On"?"block":"unblock","all"});return;}
-    if(key=="system.name") SDL_SetWindowTitle(window->win.get(),selected.c_str());
+    if(key=="system.name" && has_live_window) SDL_SetWindowTitle(window->win.get(),selected.c_str());
     if(key=="language") {c.setLanguage(selected);c.save_config();return;}
     if(key=="text.scale") {c.textScale=std::stod(selected);shell->reload_fonts();}
     else if(key=="vsync") c.setVSync(selected=="On");
-    else if(key=="fps") {c.setMaxFPS(selected=="Unlimited"?0:std::stod(selected));window->config.fpsLimit=selected=="Unlimited"?0:std::stod(selected);}
+    else if(key=="fps") {c.setMaxFPS(selected=="Unlimited"?0:std::stod(selected));if(window!=nullptr) window->config.fpsLimit=selected=="Unlimited"?0:std::stod(selected);}
     else if(key=="samples") {
+        if(window==nullptr) return;
         const auto samples=static_cast<vk::SampleCountFlagBits>(std::stoi(selected));
         const auto supported=window->physicalDevice.getProperties().limits.framebufferColorSampleCounts;
         if(!(supported&samples)) {show_error(shell,"This sample count is unavailable on the active GPU.");return;}
@@ -746,11 +731,11 @@ void apply(shell* shell,const std::string& key,const std::string& selected) {
     }
     else if(key=="display.mode") {
         const auto flags=selected=="Windowed"?0:selected=="Borderless"?SDL_WINDOW_FULLSCREEN_DESKTOP:SDL_WINDOW_FULLSCREEN;
-        if(SDL_SetWindowFullscreen(window->win.get(),flags)!=0) {show_error(shell,SDL_GetError());return;}
-        window->config.fullscreen=selected!="Windowed";
+        if(has_live_window && SDL_SetWindowFullscreen(window->win.get(),flags)!=0) {show_error(shell,SDL_GetError());return;}
+        if(window!=nullptr) window->config.fullscreen=selected!="Windowed";
     }
-    else if(key=="display.monitor") {const int index=std::stoi(selected);SDL_Rect bounds{};if(SDL_GetDisplayBounds(index,&bounds)==0) SDL_SetWindowPosition(window->win.get(),bounds.x,bounds.y);}
-    else if(key=="display.resolution") {int w=0,h=0;const auto x=selected.find('x');if(x!=std::string::npos) {w=std::stoi(selected.substr(0,x));h=std::stoi(selected.substr(x+1));}if(w>0&&h>0) {SDL_DisplayMode mode{};mode.w=w;mode.h=h;SDL_SetWindowDisplayMode(window->win.get(),&mode);SDL_SetWindowSize(window->win.get(),w,h);}}
+    else if(key=="display.monitor") {const int index=std::stoi(selected);SDL_Rect bounds{};if(has_live_window && SDL_GetDisplayBounds(index,&bounds)==0) SDL_SetWindowPosition(window->win.get(),bounds.x,bounds.y);}
+    else if(key=="display.resolution") {int w=0,h=0;const auto x=selected.find('x');if(x!=std::string::npos) {w=std::stoi(selected.substr(0,x));h=std::stoi(selected.substr(x+1));}if(w>0&&h>0&&has_live_window) {SDL_DisplayMode mode{};mode.w=w;mode.h=h;SDL_SetWindowDisplayMode(window->win.get(),&mode);SDL_SetWindowSize(window->win.get(),w,h);}}
     else if(key=="autostart") {
 #ifdef _WIN32
         HKEY handle{};if(RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,nullptr,0,KEY_SET_VALUE,nullptr,&handle,nullptr)!=ERROR_SUCCESS) {show_error(shell,"Unable to update launch at login.");return;}

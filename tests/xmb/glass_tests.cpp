@@ -2,6 +2,7 @@
 #include "openxmb/xmb/pause_backdrop.hpp"
 #include "openxmb/xmb/child_process.hpp"
 #include "openxmb/xmb/ipc_message.hpp"
+#include "openxmb/xmb/iwctl_status.hpp"
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <chrono>
@@ -246,6 +247,53 @@ void an_empty_connection_reads_nothing() {
   close(quiet[1]);
 }
 
+void fatal_fd_errors_do_not_spin_timeout() {
+  int fds[2];
+  require(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair");
+  const int closed_fd = fds[0];
+  close(fds[0]);
+  close(fds[1]);
+  const auto start = std::chrono::steady_clock::now();
+  require(!openxmb::xmb::read_ipc_message(closed_fd, 250), "closed fd fails without spinning");
+  require(!openxmb::xmb::read_ipc_message(-1, 250), "negative fd returns nullopt immediately");
+  const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - start).count();
+  require(took < 50, "non-recoverable fd errors exit immediately instead of spinning until deadline");
+}
+
+void iwctl_parsers_match_exact_fields_and_strip_ansi() {
+  const std::string off_before_station =
+      "  Name                 wlan0\n"
+      "  Powered              off\n"
+      "  Mode                 station\n";
+  require(!openxmb::xmb::parse_iwctl_powered(off_before_station),
+          "Powered off followed by Mode station must not report powered on");
+
+  const std::string off_after_station =
+      "  Mode                 station\n"
+      "  Powered              off\n"
+      "  Adapter              phy0\n";
+  require(!openxmb::xmb::parse_iwctl_powered(off_after_station),
+          "Powered off reports false");
+
+  const std::string on_with_ansi =
+      "\x1b[0m  \x1b[1mPowered\x1b[0m              \x1b[32mon\x1b[0m  \r\n"
+      "  Mode                 station\r\n";
+  require(openxmb::xmb::parse_iwctl_powered(on_with_ansi),
+          "ANSI-formatted Powered on reports true");
+
+  const std::string station_show =
+      "                                 Station: wlan0\n"
+      "--------------------------------------------------------------------------------\n"
+      "  Scanning             off\n"
+      "  State                connected\n"
+      "  Connected network    \x1b[1mHome-5G\x1b[0m   \r\n";
+  require(openxmb::xmb::parse_iwctl_connected_network(station_show) == "Home-5G",
+          "Connected network trims whitespace and strips ANSI escapes");
+  require(openxmb::xmb::parse_iwctl_connected_network("  State                disconnected\n").empty(),
+          "disconnected station returns empty network name");
+}
+
 void panels_grow_and_fade() {
   const auto start = glass::panel_in(0);
   require(near(start.alpha, 0) && near(start.scale, 0.96F), "panels start clear and small");
@@ -286,6 +334,8 @@ int main() {
   a_finished_child_reports_its_exit();
   a_message_written_after_connect_is_not_lost();
   an_empty_connection_reads_nothing();
+  fatal_fd_errors_do_not_spin_timeout();
+  iwctl_parsers_match_exact_fields_and_strip_ansi();
   pause_panel_waits_for_the_still_at_most_250_ms();
   a_failed_capture_shows_the_fallback_panel();
   a_late_still_is_ignored_after_resume();

@@ -1038,7 +1038,12 @@ result main_menu::move_action(action action) {
             std::size_t from=0;
             for(std::size_t i=0;i<menu::library_columns.size();++i)
                 if(menu::library_columns[i].id==column->column()) from=i;
-            const auto to=static_cast<int>(from)+(action==action::left?-1:1);
+            const int step=action==action::left?-1:1;
+            int to=static_cast<int>(from)+step;
+            while(to>=0&&to<static_cast<int>(menu::library_columns.size())&&
+                  config::CONFIG.hidden_category(menu::library_columns[static_cast<std::size_t>(to)].id)) {
+                to+=step;
+            }
             if(to<0||to>=static_cast<int>(menu::library_columns.size()))
                 return result::unsupported | result::error_rumble;
             const std::string target(menu::library_columns[static_cast<std::size_t>(to)].id);
@@ -1053,6 +1058,7 @@ result main_menu::move_action(action action) {
             config::CONFIG.libraryPlacement[id]=target;
             config::CONFIG.save_config();
             xmb->reload_menu();
+            bool landed=false;
             for(std::size_t i=0;i<menus.size();++i) {
                 auto* candidate=dynamic_cast<menu::library_menu*>(menus[i].get());
                 if(candidate==nullptr||candidate->column()!=target) continue;
@@ -1066,8 +1072,10 @@ result main_menu::move_action(action action) {
                 }
                 if(row>=0) candidate->select_submenu(static_cast<unsigned int>(row));
                 last_selected_menu_item=static_cast<int>(candidate->get_selected_submenu());
+                landed=true;
                 break;
             }
+            if(!landed) move_mode=false;
             return result::success | result::ok_sound;
         }
         case action::ok:
