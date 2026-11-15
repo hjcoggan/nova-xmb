@@ -606,7 +606,8 @@ class nova_update_item final : public progress_item {
             return status::running;
         }
     private:
-        static constexpr std::size_t max_event_line_bytes=1024U*1024U;
+        // JSON escaping can expand a 1 MiB producer detail to roughly 6 MiB.
+        static constexpr std::size_t max_event_line_bytes=8U*1024U*1024U;
 
         void reject_oversized_event() {
             std::lock_guard<std::mutex> lock(mutex);
