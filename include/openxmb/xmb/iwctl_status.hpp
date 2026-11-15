@@ -38,7 +38,11 @@ inline std::optional<std::string> parse_iwctl_field(std::string_view output, std
   std::istringstream in(clean);
   std::string line;
   while (std::getline(in, line)) {
-    const auto trimmed = trim_ascii(line);
+    auto trimmed = trim_ascii(line);
+    // Settable properties carry a "*" in a marker column before the name.
+    if (trimmed.starts_with('*')) {
+      trimmed = trim_ascii(std::string_view(trimmed).substr(1));
+    }
     if (!trimmed.starts_with(key)) {
       continue;
     }

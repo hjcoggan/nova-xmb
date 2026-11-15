@@ -329,6 +329,21 @@ void iwctl_parsers_match_exact_fields_and_strip_ansi() {
   require(openxmb::xmb::parse_iwctl_powered(on_with_ansi),
           "ANSI-formatted Powered on reports true");
 
+  // Real `iwctl device wlan0 show` output: settable properties carry a bold
+  // "*" in a marker column, so the line reads "*  Powered   on".
+  const std::string settable_marker =
+      "                                 Device: wlan0\x1b[1;90m                                 \x1b[0m\n"
+      "\x1b[1;90m  Settable  Property              Value                                          \n"
+      "\x1b[0m            Name                  wlan0                                            \n"
+      "  \x1b[1;90m       *\x1b[0m  Mode                  station                                          \n"
+      "  \x1b[1;90m       *\x1b[0m  Powered               on                                               \n"
+      "            Address               02:00:00:00:00:00                                \n";
+  require(openxmb::xmb::parse_iwctl_powered(settable_marker),
+          "a Powered row with the settable marker reports on");
+  require(!openxmb::xmb::parse_iwctl_powered(
+              "  \x1b[1;90m       *\x1b[0m  Powered               off\n"),
+          "a Powered off row with the settable marker reports off");
+
   const std::string station_show =
       "                                 Station: wlan0\n"
       "--------------------------------------------------------------------------------\n"
