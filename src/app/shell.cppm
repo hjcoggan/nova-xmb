@@ -128,25 +128,42 @@ namespace app
             std::string get_controller_type() const;
             const texture* get_button_icon(action value) const { return buttonTextures[std::to_underlying(value)].get(); }
             std::string get_button_label(action value) const { return button_labels[std::to_underlying(value)]; }
-            void render_controller_buttons(gui_renderer& renderer, float x, float y, std::ranges::range auto buttons) {
+            // `plate` draws the hints on a glass capsule, for hints that sit
+            // directly on the wallpaper rather than inside a panel.
+            void render_controller_buttons(gui_renderer& renderer, float x, float y, std::ranges::range auto buttons, bool plate=false) {
                 const float fw=static_cast<float>(renderer.frame_size.width),fh=static_cast<float>(renderer.frame_size.height);
                 const float ui=static_cast<float>(config::CONFIG.ui_scale());
                 const float scale=(fh/1080.0F)*ui,height=28.0F*scale,gap=10.0F*scale,spacing=52.0F*scale;
                 const float font=24.0F*scale,key_font=17.0F*scale;
-                const auto glyph_width=[&](action a){const auto& label=button_labels[std::to_underlying(a)];return label.empty()?height:std::max(height,renderer.text_width_pixels(label,key_font)+14*scale);};
+                // Button prompts are round: a circle for a face button, a pill
+                // for a longer label such as Start.
+                const float cap=32.0F*scale;
+                const auto glyph_width=[&](action a){const auto& label=button_labels[std::to_underlying(a)];return label.empty()?cap:std::max(cap,renderer.text_width_pixels(label,key_font)+12*scale);};
                 float total=0;for(const auto& [a,text]:buttons)if(a!=action::none)total+=glyph_width(a)+gap+renderer.text_width_pixels(::openxmb::localization::shell_locale::translate(text),font)+spacing;
                 if(total>0)total-=spacing;float current=x*fw-total*0.5F;
                 const auto metrics=renderer.text_line_metrics_pixels(font),key_metrics=renderer.text_line_metrics_pixels(key_font);
+                const auto rounded=[&](float px,float py,float pw,float ph,glm::vec4 colour,float radius) {
+                    auroreengine::simple_params parameters{};
+                    parameters.aspect_ratio=pw/ph;parameters.border_radius.fill(std::min(radius/ph,0.5F));
+                    renderer.draw_rect({px/fw,py/fh},{pw/fw,ph/fh},colour,parameters);
+                };
+                if(plate&&total>0) {
+                    const float pad_x=26.0F*scale,plate_h=54.0F*scale,rim=1.6F*scale;
+                    const float px=current-pad_x,py=y*fh-plate_h*0.5F,pw=total+2*pad_x;
+                    rounded(px,py,pw,plate_h,{0.55F,0.68F,1.0F,0.26F},plate_h*0.5F);
+                    rounded(px+rim,py+rim,pw-2*rim,plate_h-2*rim,{0.0025F,0.0045F,0.014F,0.62F},plate_h*0.5F-rim);
+                }
                 for(const auto& [a,text]:buttons) {
                     if(a==action::none)continue;const auto i=std::to_underlying(a);const auto width=glyph_width(a);
                     if(!button_labels[i].empty()) {
-                        renderer.draw_rect({current/fw,y-height/(2*fh)},{width/fw,height/fh},{1,1,1,0.75F});
-                        renderer.draw_rect({(current+scale)/fw,y-height/(2*fh)+scale/fh},{(width-2*scale)/fw,(height-2*scale)/fh},{0.08F,0.08F,0.08F,1});
+                        // The key cap: a pale ring around a dark face.
+                        rounded(current,y*fh-cap*0.5F,width,cap,{1,1,1,0.85F},cap*0.5F);
+                        rounded(current+1.8F*scale,y*fh-cap*0.5F+1.8F*scale,width-3.6F*scale,cap-3.6F*scale,{0.012F,0.02F,0.05F,0.92F},cap*0.5F-1.8F*scale);
                         renderer.draw_text_pixels(button_labels[i],current+width*0.5F,y*fh+(key_metrics.x-key_metrics.y)*0.5F,key_font,{1,1,1,1},0.7F,0,true);
                     } else if(auto* icon=buttonTextures[i].get(); icon!=nullptr&&icon->loaded) {
-                        float draw_w=height,draw_h=height;
+                        float draw_w=cap,draw_h=cap;
                         if(icon->width>0&&icon->height>0) {
-                            const float fit=std::min(height/static_cast<float>(icon->width),height/static_cast<float>(icon->height));
+                            const float fit=std::min(cap/static_cast<float>(icon->width),cap/static_cast<float>(icon->height));
                             draw_w=static_cast<float>(icon->width)*fit;
                             draw_h=static_cast<float>(icon->height)*fit;
                         }
@@ -197,8 +214,12 @@ namespace app
                 return false;
             }
             // Shows "Starting <title>" until the game has a window of its own.
-            void begin_launch(const std::string& title);
+            // `artwork` is the game's banner or icon file, if it has one.
+            void begin_launch(const std::string& title, const std::string& artwork = {});
             void end_launch();
+            // Lets the player reorder the selected library item or move it to
+            // another column.
+            void begin_library_move() { menu.begin_move(); }
 
             bool has_pause_overlay() const {
                 for(const auto& overlay : overlays) {
@@ -406,6 +427,12 @@ namespace app
             bool background_only = false;
             bool ingame_mode = false;
             bool launch_menu_had_focus = false;
+            // True from the moment a launched game takes the screen until its
+            // process is gone. The menu then draws nothing and its surface is
+            // transparent, so when Home floats it over the frozen game the first
+            // thing on screen is the game, not a stale frame of the menu.
+            bool game_has_screen = false;
+            std::chrono::steady_clock::time_point game_focus_returned{};
             std::chrono::steady_clock::time_point launch_started{};
 
             bool blur_background = false;

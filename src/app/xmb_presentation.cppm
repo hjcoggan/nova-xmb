@@ -56,6 +56,90 @@ struct xmb_canvas {
         const std::array<V,4> vertices{V{{left,upper},top,{0,0}},V{{right,upper},top,{1,0}},V{{left,lower},bottom,{0,1}},V{{right,lower},bottom,{1,1}}};
         renderer.draw_quad(vertices);
     }
+    // --- Glass -------------------------------------------------------------
+    // The console's surfaces are smoked glass: a dark translucent body that
+    // keeps white text readable over any wallpaper, a bright rim, a sheen on
+    // the upper half and a soft shadow. They are a handful of plain quads.
+    //
+    // A rectangle whose edges fade out over `feather` design units.
+    void soft_rect(float x,float y,float w,float h,glm::vec4 color,float feather) const {
+        if(w<=0||h<=0) return;
+        auroreengine::simple_params parameters{};
+        const float fx=std::min(feather/w,0.5f),fy=std::min(feather/h,0.5f);
+        parameters.blur={glm::vec2{0,fx},glm::vec2{0,fx},glm::vec2{0,fy},glm::vec2{0,fy}};
+        renderer.draw_rect({(ox+x*scale)/renderer.frame_size.width,(oy+y*scale)/renderer.frame_size.height},
+            {w*scale/renderer.frame_size.width,h*scale/renderer.frame_size.height},color,parameters);
+    }
+    // A vertical gradient with its own corner radii (top pair, bottom pair).
+    void rounded_gradient(float x,float y,float w,float h,glm::vec4 top,glm::vec4 bottom,float top_radius,float bottom_radius=0) const {
+        if(w<=0||h<=0) return;
+        using V=auroreengine::simple_renderer::vertex_data;
+        auroreengine::simple_params parameters{};
+        parameters.aspect_ratio=w/h;
+        const float tr=std::min(top_radius/h,0.5f),br=std::min(bottom_radius/h,0.5f);
+        parameters.border_radius={tr,tr,br,br};
+        const float left=(ox+x*scale)/renderer.frame_size.width,right=(ox+(x+w)*scale)/renderer.frame_size.width;
+        const float upper=(oy+y*scale)/renderer.frame_size.height,lower=(oy+(y+h)*scale)/renderer.frame_size.height;
+        const std::array<V,4> vertices{V{{left,upper},top,{0,0}},V{{right,upper},top,{1,0}},V{{left,lower},bottom,{0,1}},V{{right,lower},bottom,{1,1}}};
+        renderer.draw_quad(vertices,parameters);
+    }
+    // A small solid arrowhead: the font has no arrow glyphs.
+    enum class arrow_direction { left, right, up, down };
+    void arrow(float cx,float cy,float size,arrow_direction direction,glm::vec4 color) const {
+        using V=auroreengine::simple_renderer::vertex_data;
+        const float h=size*0.5f;
+        std::array<glm::vec2,3> points{};
+        switch(direction) {
+            case arrow_direction::left:  points={glm::vec2{cx-h,cy},glm::vec2{cx+h,cy-h},glm::vec2{cx+h,cy+h}};break;
+            case arrow_direction::right: points={glm::vec2{cx+h,cy},glm::vec2{cx-h,cy-h},glm::vec2{cx-h,cy+h}};break;
+            case arrow_direction::up:    points={glm::vec2{cx,cy-h},glm::vec2{cx-h,cy+h},glm::vec2{cx+h,cy+h}};break;
+            case arrow_direction::down:  points={glm::vec2{cx,cy+h},glm::vec2{cx-h,cy-h},glm::vec2{cx+h,cy-h}};break;
+        }
+        std::array<V,3> vertices{};
+        for(std::size_t i=0;i<3;++i)
+            vertices[i]=V{{(ox+points[i].x*scale)/renderer.frame_size.width,(oy+points[i].y*scale)/renderer.frame_size.height},color,{0.5f,0.5f}};
+        renderer.draw_generic(vertices);
+    }
+    // Colours are authored as sRGB bytes; the render target is linear.
+    static glm::vec4 srgb(float r,float g,float b,float a=1) {
+        const auto channel=[](float v){v/=255.0f;return v<=0.04045f?v/12.92f:std::pow((v+0.055f)/1.055f,2.4f);};
+        return {channel(r),channel(g),channel(b),a};
+    }
+    // A glass panel. `density` is how much of the scene behind it is hidden.
+    void glass(float x,float y,float w,float h,float radius=28,float alpha=1,float density=0.80f,bool shadow=true) const {
+        if(w<=0||h<=0||alpha<=0.001f) return;
+        radius=std::min(radius,std::min(w,h)*0.5f);
+        if(shadow) soft_rect(x-34,y-14,w+68,h+78,{0,0,0,0.38f*alpha},std::min(70.0f,(h+78)*0.5f));
+        // Rim: the whole shape in pale light, then the body inset by its width.
+        constexpr float rim=1.8f;
+        rect(x,y,w,h,srgb(196,214,255,0.30f*alpha),radius);
+        rect(x+rim,y+rim,w-2*rim,h-2*rim,srgb(9,14,32,density*alpha),std::max(0.0f,radius-rim));
+        // Sheen on the upper half, and the light catching the top edge.
+        rounded_gradient(x+rim,y+rim,w-2*rim,(h-2*rim)*0.5f,{1,1,1,0.060f*alpha},{1,1,1,0.0f},std::max(0.0f,radius-rim));
+        if(w>2*radius+8) soft_rect(x+radius,y,w-2*radius,rim,{1,1,1,0.34f*alpha},std::min(48.0f,(w-2*radius)*0.3f));
+    }
+    // Clear glass: a lens over the wallpaper that lifts what sits on it
+    // without hiding the scene. Used under the focused row of the crossbar.
+    void glass_clear(float x,float y,float w,float h,float radius,float alpha=1) const {
+        if(w<=0||h<=0||alpha<=0.001f) return;
+        radius=std::min(radius,std::min(w,h)*0.5f);
+        constexpr float rim=1.6f;
+        soft_rect(x-22,y-6,w+44,h+44,{0,0,0,0.20f*alpha},std::min(48.0f,(h+44)*0.5f));
+        rect(x,y,w,h,srgb(205,222,255,0.34f*alpha),radius);
+        rect(x+rim,y+rim,w-2*rim,h-2*rim,srgb(20,44,110,0.34f*alpha),std::max(0.0f,radius-rim));
+        rounded_gradient(x+rim,y+rim,w-2*rim,(h-2*rim)*0.5f,{1,1,1,0.085f*alpha},{1,1,1,0.0f},std::max(0.0f,radius-rim));
+        if(w>2*radius+8) soft_rect(x+radius,y,w-2*radius,rim,{1,1,1,0.42f*alpha},std::min(48.0f,(w-2*radius)*0.3f));
+    }
+    // The focus capsule behind a selected row: lit blue glass.
+    void glass_focus(float x,float y,float w,float h,float alpha=1,float max_radius=1000) const {
+        if(w<=0||h<=0||alpha<=0.001f) return;
+        const float radius=std::min(h*0.5f,max_radius);
+        constexpr float rim=1.8f;
+        rect(x,y,w,h,srgb(214,230,255,0.58f*alpha),radius);
+        rect(x+rim,y+rim,w-2*rim,h-2*rim,srgb(46,84,168,0.72f*alpha),radius-rim);
+        rounded_gradient(x+rim,y+rim,w-2*rim,(h-2*rim)*0.5f,{1,1,1,0.13f*alpha},{1,1,1,0.0f},radius-rim);
+    }
+    // --------------------------------------------------------------------
     void image(const auroreengine::texture& t,float x,float y,float w,float h,glm::vec4 color=glm::vec4(1)) const {
         renderer.draw_image(t,(ox+x*scale)/renderer.frame_size.width,(oy+y*scale)/renderer.frame_size.height,
             w*scale/renderer.frame_size.height,h*scale/renderer.frame_size.height,color);

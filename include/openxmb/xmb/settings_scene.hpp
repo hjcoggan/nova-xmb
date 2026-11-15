@@ -49,6 +49,31 @@ struct SettingsSceneMetrics {
   static constexpr std::size_t max_description_lines = 3;
 };
 
+// One look for every column: game covers sit on cards of one size, and the
+// focused row of any column rests on a lens with the same left edge, padding
+// and corners. Both are in the scene's logical units, relative to the row's
+// icon extent.
+struct SelectionLens {
+  static constexpr double card_width = 1.42;   // cover card width / extent
+  static constexpr double card_height = 0.80;  // cover card height / extent
+  static constexpr double left_padding = 18.0;
+  static constexpr double vertical_padding = 22.0;
+  static constexpr double right_padding = 40.0;
+  static constexpr double radius = 34.0;
+  // The lens starts left of the widest thing a row can show: a cover card.
+  [[nodiscard]] static constexpr double left(double icon_center_x, double extent) noexcept {
+    return icon_center_x - extent * card_width * 0.5 - left_padding;
+  }
+  [[nodiscard]] static constexpr double height(double extent) noexcept {
+    return extent * card_height + vertical_padding;
+  }
+  // Every row's image, icon or logo, is fitted into this box, so rows in
+  // every column have the same size; labels start the same distance after it.
+  [[nodiscard]] static constexpr double box_width(double extent) noexcept { return extent * card_width; }
+  [[nodiscard]] static constexpr double box_height(double extent) noexcept { return extent * card_height; }
+  static constexpr double label_shift = 48.0;
+};
+
 enum class SettingsScenePresence { visible, entering, exiting, hidden };
 
 // This is a borrowed, allocation-free view of the navigation state. menu_id

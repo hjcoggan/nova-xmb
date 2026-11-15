@@ -381,6 +381,13 @@ app_info::app_info(const std::filesystem::path& desktop_file) {
                 in_desktop_entry = true;
                 continue;
             }
+            // Any other group ([Desktop Action ...]) ends the entry. Reading on
+            // gave every Waydroid app the name and command of its "App Settings"
+            // action.
+            if (line.front() == '[') {
+                in_desktop_entry = false;
+                continue;
+            }
             
             if (!in_desktop_entry) {
                 continue;
@@ -480,6 +487,54 @@ std::unique_ptr<action_menu_entry> applications_menu::create_action_menu_entry(c
     return entry;
 }
 
+namespace {
+
+bool is_game_manifest(const app_info& app)
+{
+    return app.exec.starts_with("nova-launch ");
+}
+
+std::string runtime_label(const app_info& app)
+{
+    if(!is_game_manifest(app)) return "Application";
+    const auto& runtime = app.runtime;
+    if(runtime == "proton") return "Windows (Proton)";
+    if(runtime == "fex") return "x86 Linux (FEX)";
+    if(runtime == "android" || runtime == "waydroid") return "Android";
+    if(runtime == "emulation" || runtime == "retroarch") return "Emulator";
+    return "Native";
+}
+
+// Desktop entries a console has no use for: terminal programs, entries meant
+// for a desktop's own menus, and Waydroid's launchers (Android apps are
+// started through their game.json, so Home, pause and quit work).
+bool console_desktop_entry(const app_info& app)
+{
+    if(app.name.empty() || app.exec.empty() || app.hidden || app.no_display || app.terminal) {
+        return false;
+    }
+    if(app.id.starts_with("waydroid.") || app.id == "Waydroid" ||
+       app.id == "org.freedesktop.Xwayland") {
+        return false;
+    }
+    return true;
+}
+
+bool start_library_item(const app_info& app, app::shell* xmb)
+{
+    auto args = build_launch_args(app);
+    if(args.empty() || !launch_detached(args)) {
+        spdlog::warn("Failed to start {} ({})", app.name, app.exec);
+        return false;
+    }
+    if(xmb != nullptr && is_game_manifest(app)) {
+        xmb->begin_launch(app.name, app.icon);
+    }
+    return true;
+}
+
+} // namespace
+
 std::unique_ptr<action_menu_entry> create_game_menu_entry(
     const app_info& app,
     app::shell* xmb,
@@ -491,8 +546,14 @@ std::unique_ptr<action_menu_entry> create_game_menu_entry(
     if(!app.icon.empty() && std::filesystem::is_regular_file(app.icon, ec)) {
         icon_path = app.icon;
         custom_icon = true;
+    } else if(auto resolved = is_game_manifest(app)
+            ? std::optional<std::filesystem::path>{}
+            : utils::resolve_icon_from_json(app.icon)) {
+        icon_path = resolved->string();
+        custom_icon = true;
     } else {
-        const auto fallback_path = config::CONFIG.asset_directory / "icons" / "icon_category_game.png";
+        const auto fallback_path = config::CONFIG.asset_directory / "icons" /
+            (is_game_manifest(app) ? "icon_category_game.png" : "icon_category_application.png");
         if(std::filesystem::is_regular_file(fallback_path, ec)) {
             icon_path = fallback_path.string();
         }
@@ -505,39 +566,25 @@ std::unique_ptr<action_menu_entry> create_game_menu_entry(
         std::function<result()>{},
         [xmb, app](action a) -> result {
             if(a == action::ok) {
-                auto args = build_launch_args(app);
-                if(args.empty() || !launch_detached(args)) {
-                    spdlog::warn("Failed to launch game manifest: {} ({})", app.name, app.exec);
-                    return result::failure;
-                }
-                if(xmb != nullptr) xmb->begin_launch(app.name);
-                return result::success;
+                return start_library_item(app, xmb) ? result::success : result::failure;
             }
             if(a == action::options && xmb != nullptr) {
                 xmb->emplace_overlay<app::choice_overlay>(
-                    std::vector{"Launch Game"_(), "View information"_()},
+                    std::vector{"Start"_(), "Move"_(), "Information"_()},
                     0,
-                    [xmb, app](unsigned int index) -> result {
+                    [xmb, app](unsigned int index) {
                         if(index == 0) {
-                            auto args = build_launch_args(app);
-                            if(args.empty() || !launch_detached(args)) {
-                                return result::failure;
-                            }
-                            xmb->begin_launch(app.name);
-                            return result::close;
-                        }
-                        if(index == 1) {
+                            start_library_item(app, xmb);
+                        } else if(index == 1) {
+                            xmb->begin_library_move();
+                        } else if(index == 2) {
                             xmb->emplace_overlay<app::message_overlay>(
-                                "Game Information"_(),
-                                std::string("Title: ") + app.name + "\n" +
-                                std::string("ID: ") + app.id + "\n" +
-                                std::string("Runtime: ") + (app.runtime.empty() ? "native" : app.runtime) + "\n" +
-                                std::string("Command: ") + app.exec + "\n" +
-                                std::string("Manifest: ") + app.desktop_file.string()
+                                app.name,
+                                std::string("Runs as: ") + runtime_label(app) + "\n" +
+                                std::string("Name in the library: ") + app.id + "\n" +
+                                std::string("Files: ") + app.desktop_file.parent_path().string()
                             );
-                            return result::close;
                         }
-                        return result::unsupported;
                     }
                 );
                 return result::success;
@@ -556,6 +603,118 @@ std::unique_ptr<action_menu_entry> create_game_menu_entry(
         loader.loadTexture(&bg_slot, app.background);
     }
     return entry;
+}
+
+std::vector<app_info> scan_library()
+{
+    std::vector<app_info> items;
+    std::unordered_set<std::string> seen_ids;
+    for(auto& game : scan_game_manifests()) {
+        if(!config::CONFIG.excludedApplications.contains(game.id) && seen_ids.insert(game.id).second) {
+            items.push_back(std::move(game));
+        }
+    }
+
+    const char* home = std::getenv("HOME");
+    const std::vector<std::filesystem::path> search_paths = {
+        std::filesystem::path(home ? home : "") / ".local/share/applications",
+        "/run/current-system/sw/share/applications",
+        "/usr/share/applications",
+        "/usr/local/share/applications",
+    };
+    std::error_code ec;
+    for(const auto& search_path : search_paths) {
+        for(std::filesystem::directory_iterator it(search_path,
+                std::filesystem::directory_options::skip_permission_denied, ec), end;
+            !ec && it != end; it.increment(ec)) {
+            if(it->path().extension() != ".desktop") {
+                continue;
+            }
+            app_info app(it->path());
+            if(console_desktop_entry(app) &&
+               !config::CONFIG.excludedApplications.contains(app.id) &&
+               seen_ids.insert(app.id).second) {
+                items.push_back(std::move(app));
+            }
+        }
+        ec.clear();
+    }
+    return items;
+}
+
+std::string library_column_of(const app_info& app)
+{
+    if(const auto it = config::CONFIG.libraryPlacement.find(app.id);
+       it != config::CONFIG.libraryPlacement.end()) {
+        for(const auto& column : library_columns) {
+            if(column.id == it->second) return it->second;
+        }
+    }
+    if(!is_game_manifest(app)) return "applications";
+    if(app.runtime == "android" || app.runtime == "waydroid") return "android";
+    return "games";
+}
+
+library_menu::library_menu(std::string name, auroreengine::texture&& icon, std::string column,
+    app::shell* xmb, auroreengine::resource_loader& loader, std::vector<app_info> library_items)
+    : simple_menu(std::move(name), std::move(icon)), column_id(std::move(column)), items(std::move(library_items))
+{
+    // The player's order first; anything new goes after it, by title.
+    const auto order_it = config::CONFIG.libraryOrder.find(column_id);
+    const auto rank = [&](const app_info& app) {
+        if(order_it != config::CONFIG.libraryOrder.end()) {
+            const auto& order = order_it->second;
+            if(const auto found = std::ranges::find(order, app.id); found != order.end()) {
+                return static_cast<std::size_t>(std::distance(order.begin(), found));
+            }
+        }
+        return static_cast<std::size_t>(-1);
+    };
+    std::ranges::stable_sort(items, [&](const app_info& a, const app_info& b) {
+        const auto ra = rank(a), rb = rank(b);
+        return ra != rb ? ra < rb : a.name < b.name;
+    });
+    for(const auto& app : items) {
+        entries.push_back(create_game_menu_entry(app, xmb, loader));
+    }
+}
+
+std::string library_menu::selected_id() const
+{
+    return selected_submenu < items.size() ? items[selected_submenu].id : std::string{};
+}
+
+std::string library_menu::selected_title() const
+{
+    return selected_submenu < items.size() ? items[selected_submenu].name : std::string{};
+}
+
+int library_menu::index_of(std::string_view id) const
+{
+    for(std::size_t i = 0; i < items.size(); ++i) {
+        if(items[i].id == id) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+bool library_menu::move_selected(int delta)
+{
+    const auto from = static_cast<int>(selected_submenu);
+    const auto to = from + delta;
+    if(delta == 0 || to < 0 || to >= static_cast<int>(items.size())) {
+        return false;
+    }
+    std::swap(items[from], items[to]);
+    std::swap(entries[from], entries[to]);
+    selected_submenu = static_cast<unsigned int>(to);
+    return true;
+}
+
+void library_menu::store_order() const
+{
+    auto& order = config::CONFIG.libraryOrder[column_id];
+    order.clear();
+    for(const auto& app : items) order.push_back(app.id);
 }
 
 std::vector<app_info> applications_menu::scan_applications() {

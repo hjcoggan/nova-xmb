@@ -174,6 +174,9 @@ export class component {
         virtual result tick(app::shell* xmb) { return result::success; }
         [[nodiscard]] virtual float typography_scale() const { return 1.0F; }
     virtual bool is_opaque() const { return true; }
+    // True while this overlay hides the whole screen, so the wallpaper
+    // behind it need not be drawn.
+    virtual bool covers_scene() const { return false; }
     virtual bool music_background() const { return false; }
       virtual bool music_reactive() const { return false; }
       virtual bool keeps_awake() const { return false; }

@@ -258,6 +258,21 @@ void pause_overlay::refresh_levels() {
     brightness_pct = read_brightness_pct();
 }
 
+// Rows, top to bottom. Quit is last, away from Resume.
+namespace {
+constexpr int row_resume = 0;
+constexpr int row_volume = 1;
+constexpr int row_brightness = 2;
+constexpr int row_quit = 3;
+constexpr int row_count = 4;
+}
+
+void pause_overlay::begin_closing() {
+    if (!closing_since) {
+        closing_since = std::chrono::steady_clock::now();
+    }
+}
+
 void pause_overlay::render(auroreengine::gui_renderer& renderer, shell* xmb) {
     const float age = std::chrono::duration<float>(
         std::chrono::steady_clock::now() - start_time).count();
@@ -269,44 +284,104 @@ void pause_overlay::render(auroreengine::gui_renderer& renderer, shell* xmb) {
     const float top = c.visible_top();
     const float span_w = c.visible_right() - left;
     const float span_h = c.visible_bottom() - top;
-    c.rect(left, top, span_w, span_h, {0.0f, 0.0f, 0.0f, 0.75f});
-    c.rect(left, 199, span_w, 680, {0.0f, 0.0f, 0.0f, 0.65f});
-    c.rect(left, 199, span_w, 1, {1.0f, 1.0f, 1.0f, 0.75f});
-    c.rect(left, 879, span_w, 1, {1.0f, 1.0f, 1.0f, 0.75f});
+    // The frozen game stays recognisable behind a dark veil; the panel is
+    // dense enough that the game's own text does not show through it. While
+    // the game is being stopped the veil closes completely, so its window
+    // can vanish behind it unseen.
+    const float closing_seconds = std::chrono::duration<float>(closing_for()).count();
+    const float shut = closing() ? smooth01(closing_seconds / 0.25f) : 0.0f;
+    c.rect(left - 2, top - 2, span_w + 4, span_h + 4, {0.0f, 0.0f, 0.0f, 0.80f + 0.20f * shut});
 
     const std::string& display_name = current_game_title.empty()
         ? current_game_id
         : current_game_title;
-    const std::string title = display_name.empty()
-        ? "Game Paused"
-        : ("Game Paused - " + display_name);
-    c.text(title, 960, 275, 34, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, true);
+    if (closing()) {
+        const std::string name = display_name.empty() ? std::string("Game") : display_name;
+        constexpr float w = 560.0f, h = 210.0f;
+        c.glass(960.0f - w * 0.5f, 540.0f - h * 0.5f - 24.0f, w, h, 40.0f, shut, 0.90f);
+        renderer.push_color({1.0f, 1.0f, 1.0f, shut});
+        c.text(std::string("Closing"), 960, 540.0f - 46.0f, 24, {0.72f, 0.82f, 1.0f, 0.90f}, 0.0f, true);
+        c.text(name, 960, 540.0f + 6.0f, 38, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, true);
+        for (int i = 0; i < 3; ++i) {
+            const float lit = 0.5f + 0.5f * std::sin((closing_seconds - static_cast<float>(i) * 0.33f) * 3.9f);
+            const float size = 11.0f + 4.0f * lit;
+            c.rect(960.0f + (static_cast<float>(i) - 1.0f) * 32.0f - size * 0.5f, 540.0f + 44.0f - size * 0.5f,
+                size, size, {0.80f, 0.90f, 1.0f, 0.28f + 0.72f * lit}, size * 0.5f);
+        }
+        renderer.pop_color();
+        renderer.pop_color();
+        return;
+    }
 
-    const std::array<std::string, 4> labels = {
-        "Resume",
-        "Quit Game",
-        "Volume: < " + std::to_string(volume_pct) + "% >",
-        "Brightness: < " + std::to_string(brightness_pct) + "% >",
+    constexpr float card_w = 660.0f, row_h = 74.0f, row_gap = 10.0f, footer_h = 70.0f;
+    const float guide_h = guide_lines.empty() ? 0.0f : 26.0f + 32.0f * static_cast<float>(guide_lines.size());
+    const float card_h = 150.0f + row_count * (row_h + row_gap) + 6.0f + guide_h + footer_h;
+    const float card_x = 960.0f - card_w * 0.5f;
+    const float card_y = 540.0f - card_h * 0.5f - 12.0f + (1.0f - settle) * 18.0f;
+    c.glass(card_x, card_y, card_w, card_h, 40.0f, 1.0f, 0.90f);
+
+    c.text(std::string("Paused"), 960, card_y + 58.0f, 24, {0.72f, 0.82f, 1.0f, 0.90f}, 0.0f, true);
+    c.text(display_name.empty() ? std::string("Game") : display_name, 960, card_y + 108.0f, 38,
+        {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, true);
+
+    const float rows_y = card_y + 150.0f;
+    const float row_x = card_x + 26.0f, row_w = card_w - 52.0f;
+    const auto text_width = [&](const std::string& text, float size) {
+        return renderer.text_width_pixels(text, size * c.scale * config::CONFIG.textScale) / c.scale;
+    };
+    const auto slider = [&](float y, int percent, bool focused) {
+        constexpr float track_w = 196.0f, track_h = 8.0f;
+        const float track_x = row_x + 258.0f, track_y = y + row_h * 0.5f - track_h * 0.5f;
+        const float fill = track_w * static_cast<float>(std::clamp(percent, 0, 100)) / 100.0f;
+        c.rect(track_x, track_y, track_w, track_h, {1.0f, 1.0f, 1.0f, 0.22f}, track_h * 0.5f);
+        if (fill > 1.0f) {
+            c.rect(track_x, track_y, fill, track_h, {1.0f, 1.0f, 1.0f, focused ? 1.0f : 0.80f}, track_h * 0.5f);
+        }
+        if (focused) {
+            using direction = xmb_canvas::arrow_direction;
+            c.arrow(track_x - 26.0f, y + row_h * 0.5f, 14.0f, direction::left, {1.0f, 1.0f, 1.0f, 0.9f});
+            c.arrow(track_x + track_w + 26.0f, y + row_h * 0.5f, 14.0f, direction::right, {1.0f, 1.0f, 1.0f, 0.9f});
+        }
+        const float knob = focused ? 24.0f : 18.0f;
+        c.rect(track_x + fill - knob * 0.5f, y + row_h * 0.5f - knob * 0.5f, knob, knob,
+            {1.0f, 1.0f, 1.0f, 1.0f}, knob * 0.5f);
+        const auto value = std::to_string(percent) + "%";
+        c.text(value, row_x + row_w - 34.0f - text_width(value, 26), y + row_h * 0.5f + 10.0f, 26,
+            {1.0f, 1.0f, 1.0f, focused ? 1.0f : 0.80f});
     };
 
-    for (int i = 0; i < 4; ++i) {
-        const float y = 370.0f + static_cast<float>(i) * 76.0f;
-        const float glow = (i == selected) ? xmb_canvas::pulse() : 0.0f;
-        const glm::vec4 col = (i == selected)
+    const std::array<std::string, row_count> labels = {"Resume", "Volume", "Brightness", "Quit Game"};
+    for (int i = 0; i < row_count; ++i) {
+        const float y = rows_y + static_cast<float>(i) * (row_h + row_gap);
+        const bool focused = i == selected;
+        if (focused) {
+            c.glass_focus(row_x, y, row_w, row_h, 1.0f);
+        }
+        const glm::vec4 colour = focused
             ? glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)
-            : glm::vec4(0.85f, 0.85f, 0.85f, 0.90f);
-        c.text(labels[static_cast<std::size_t>(i)], 960, y, 28, col, glow, true);
+            : glm::vec4(1.0f, 1.0f, 1.0f, 0.80f);
+        const float baseline = y + row_h * 0.5f + 11.0f;
+        if (i == row_volume || i == row_brightness) {
+            c.text(labels[static_cast<std::size_t>(i)], row_x + 34.0f, baseline, 28, colour);
+            slider(y, i == row_volume ? volume_pct : brightness_pct, focused);
+        } else {
+            c.text(labels[static_cast<std::size_t>(i)], 960, baseline, 30, colour, 0.0f, true);
+        }
     }
 
     for (std::size_t g = 0; g < guide_lines.size(); ++g) {
-        const float gy = 696.0f + static_cast<float>(g) * 34.0f;
-        c.text(guide_lines[g], 960, gy, 21, {0.82f, 0.86f, 0.92f, 0.88f}, 0.0f, true);
+        const float gy = rows_y + row_count * (row_h + row_gap) + 34.0f + static_cast<float>(g) * 32.0f;
+        c.text(guide_lines[g], 960, gy, 21, {0.80f, 0.86f, 0.96f, 0.85f}, 0.0f, true);
     }
 
     const auto previous_scale = renderer.text_scale;
     renderer.text_scale = 1.0f;
-    xmb->render_controller_buttons(renderer, 0.5f, 0.84f, std::array{
-        std::pair{action::ok, "Select"},
+    // Confirm does nothing on a slider, so it is not offered there.
+    const bool on_slider = selected == row_volume || selected == row_brightness;
+    const float hints_y = (c.oy + (card_y + card_h - footer_h * 0.5f - 4.0f) * c.scale) /
+        static_cast<float>(renderer.frame_size.height);
+    xmb->render_controller_buttons(renderer, 0.5f, hints_y, std::array{
+        std::pair{on_slider ? action::none : action::ok, "Select"},
         std::pair{action::cancel, "Resume"},
     });
     renderer.text_scale = previous_scale;
@@ -314,39 +389,43 @@ void pause_overlay::render(auroreengine::gui_renderer& renderer, shell* xmb) {
 }
 
 result pause_overlay::on_action(action a) {
+    if (closing()) {
+        return result::success;
+    }
     switch (a) {
         case action::up:
-            selected = (selected + 3) % 4;
-            return result::success;
+            selected = (selected + row_count - 1) % row_count;
+            return result::success | result::ok_sound;
         case action::down:
-            selected = (selected + 1) % 4;
-            return result::success;
+            selected = (selected + 1) % row_count;
+            return result::success | result::ok_sound;
         case action::left:
-            if (selected == 2) {
+            if (selected == row_volume) {
                 volume_pct = std::max(0, volume_pct - 5);
                 write_volume_pct(volume_pct);
-            } else if (selected == 3) {
+            } else if (selected == row_brightness) {
                 brightness_pct = std::max(5, brightness_pct - 5);
                 write_brightness_pct(brightness_pct);
             }
             return result::success;
         case action::right:
-            if (selected == 2) {
+            if (selected == row_volume) {
                 volume_pct = std::min(100, volume_pct + 5);
                 write_volume_pct(volume_pct);
-            } else if (selected == 3) {
+            } else if (selected == row_brightness) {
                 brightness_pct = std::min(100, brightness_pct + 5);
                 write_brightness_pct(brightness_pct);
             }
             return result::success;
         case action::ok:
-            if (selected == 0) {
+            if (selected == row_resume) {
                 run_nova_home_ctl("resume", current_game_id);
                 return result::close;
             }
-            if (selected == 1) {
+            if (selected == row_quit) {
                 run_nova_home_ctl("quit", current_game_id);
-                return result::close;
+                begin_closing();
+                return result::success | result::confirm_sound;
             }
             return result::success;
         case action::cancel:

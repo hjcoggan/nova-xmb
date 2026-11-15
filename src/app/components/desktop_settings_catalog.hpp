@@ -5,6 +5,8 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include <array>
+#include <algorithm>
 
 namespace app::desktop_settings {
 struct Entry {
@@ -84,13 +86,27 @@ inline const std::vector<Entry>& entries() {
 }
 inline void populate(openxmb::xmb::Catalog& catalog,
     const std::function<std::string(std::string_view)>& translate =
-        [](std::string_view text){return std::string(text);}) {
+        [](std::string_view text){return std::string(text);}, bool console = false) {
     using namespace openxmb::xmb;
+    struct ConsoleRow { std::string_view key, group, label; };
+    static constexpr std::array<ConsoleRow,27> console_rows{{
+        ConsoleRow{"theme.waves","Theme",""}, {"theme.particles","Theme",""}, {"theme.reset","Theme",""},
+        {"display.screen.brightness","Display",""}, {"ui.scale","Display",""}, {"fps","Display",""}, {"debug.fps","Display",""},
+        {"audio.master","Sound","Volume"}, {"audio.device","Sound",""}, {"audio.effects","Sound","Menu Sounds"}, {"audio.startup","Sound",""},
+        {"network.wifi","Network",""}, {"network.wifi.join","Network",""}, {"network.bluetooth","Network",""}, {"network.bluetooth.devices","Network",""}, {"network.aeroplane","Network",""},
+        {"date.format","Date and Time",""}, {"time.format","Date and Time",""}, {"time.offset","Date and Time",""},
+        {"power.dim","Power Save",""}, {"power.reduced.motion","Power Save",""},
+        {"language","System",""}, {"startup.intro","System",""}, {"games.rescan","System",""}, {"about","System",""}, {"licenses","System",""}, {"reset","System",""}
+    }};
     auto& root=catalog.nodes.at("category.settings");
     root.children={"category.settings.system.update","category.settings.theme.settings"};root.default_selection=1;
     catalog.nodes.at("category.settings.system.update").action_id="desktop.system.update";
     for(const auto& entry:entries()) {
-        const auto group=entry.group=="Theme"?std::string{"category.settings.theme.settings"}:"category.settings.desktop."+entry.group;
+        const ConsoleRow* selected=nullptr;
+        if(console) for(const auto& row:console_rows) if(row.key==entry.key) { selected=&row; break; }
+        if(console && !selected) continue;
+        const auto group_name=selected?std::string(selected->group):entry.group;
+        const auto group=group_name=="Theme"?std::string{"category.settings.theme.settings"}:"category.settings.desktop."+group_name;
         if(!catalog.nodes.contains(group)) {
             CatalogNode node;node.id=group;node.kind=NodeKind::menu;node.label_key=group+".label";
             const std::vector<std::pair<std::string,std::string>> icons{
@@ -101,13 +117,13 @@ inline void populate(openxmb::xmb::Catalog& catalog,
             node.icon_ref="compat.icon.xmb.icon.001";
             for(const auto& [name,id]:icons)if(name==entry.group&&catalog.nodes.contains(id))node.icon_ref=catalog.nodes.at(id).icon_ref;
             node.action_id="navigate.children";
-            catalog.strings[node.label_key]=entry.group+" Settings";catalog.nodes.emplace(group,std::move(node));
+            catalog.strings[node.label_key]=group_name+" Settings";catalog.nodes.emplace(group,std::move(node));
             root.children.push_back(group);
         }
         CatalogNode node;node.id="category.settings.desktop."+entry.key;node.kind=NodeKind::setting;
         node.label_key=node.id+".label";node.description_key=node.id+".description";
         node.icon_ref="compat.icon.xmb.icon.022";node.action_id="desktop."+entry.key;
-        catalog.strings[node.label_key]=entry.label;catalog.strings[node.description_key]=entry.description;
+        catalog.strings[node.label_key]=selected&&!selected->label.empty()?std::string(selected->label):entry.label;catalog.strings[node.description_key]=entry.description;
         for(std::size_t i=0;i<entry.values.size();++i) {
             const auto key=node.id+".choice."+std::to_string(i);catalog.strings[key]=entry.values[i];
             if(entry.key=="language") {
@@ -116,6 +132,21 @@ inline void populate(openxmb::xmb::Catalog& catalog,
             node.choices.push_back({key,key,entry.values[i]});
         }
         catalog.nodes.at(group).children.push_back(node.id);catalog.nodes.emplace(node.id,std::move(node));
+    }
+    if(console) {
+        root.children={"category.settings.system.update","category.settings.theme.settings"};
+        for(const auto& row:console_rows) {
+            const auto group=row.group=="Theme"?std::string{"category.settings.theme.settings"}:"category.settings.desktop."+std::string(row.group);
+            if(std::find(root.children.begin(),root.children.end(),group)==root.children.end()) root.children.push_back(group);
+        }
+        root.default_selection=1;
+        for(const auto& group:root.children) if(group!="category.settings.system.update") {
+            auto& children=catalog.nodes.at(group).children;
+            children.erase(std::remove_if(children.begin(),children.end(),[&](const auto& id){
+                if(id=="category.settings.theme.settings.colour" || id=="category.settings.theme.settings.background" || id=="category.settings.theme.settings.day.night") return false;
+                return std::none_of(console_rows.begin(),console_rows.end(),[&](const auto& row){return id=="category.settings.desktop."+std::string(row.key);});
+            }),children.end());
+        }
     }
     catalog.strings["category.settings.system.settings.description"]="Adjust settings for the OpenXMB system.";
     // Replace the legacy console language selector with actual shipped locales.

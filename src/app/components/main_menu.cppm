@@ -52,6 +52,10 @@ class main_menu : public action_receiver {
 
         result on_action(action action) override;
         void show_settings();
+        // Picks up the selected library item so the player can reorder it or
+        // carry it to another column.
+        void begin_move();
+        [[nodiscard]] bool moving() const { return move_mode; }
     private:
         using time_point = std::chrono::time_point<std::chrono::steady_clock>;
 
@@ -86,6 +90,8 @@ class main_menu : public action_receiver {
         void select_menu_item(int index);
         void select_submenu_item(int index);
         bool select_relative(direction dir);
+        result move_action(action action);
+        void render_move_hint(auroreengine::gui_renderer& renderer, time_point now);
         bool activate_current(action action);
         bool back();
         bool settings_category_active() const;
@@ -111,6 +117,9 @@ class main_menu : public action_receiver {
         int last_selected_menu_item = 0;
         time_point last_selected_menu_item_transition;
         constexpr static auto transition_menu_item_duration = std::chrono::milliseconds(200);
+
+        bool move_mode = false;
+        time_point move_started;
 
         bool in_submenu = false;
         menu::menu* current_submenu = nullptr;

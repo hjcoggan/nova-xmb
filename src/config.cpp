@@ -707,6 +707,24 @@ void config::load_from_json() {
                 consoleMode = shell["console-mode"].get<bool>();
             }
 
+            if (shell.contains("library") && shell["library"].is_object()) {
+                const auto& library = shell["library"];
+                libraryPlacement.clear();
+                libraryOrder.clear();
+                if (library.contains("placement") && library["placement"].is_object()) {
+                    for (const auto& [id, column] : library["placement"].items()) {
+                        if (column.is_string()) libraryPlacement[id] = column.get<std::string>();
+                    }
+                }
+                if (library.contains("order") && library["order"].is_object()) {
+                    for (const auto& [column, ids] : library["order"].items()) {
+                        if (!ids.is_array()) continue;
+                        auto& list = libraryOrder[column];
+                        for (const auto& id : ids) if (id.is_string()) list.push_back(id.get<std::string>());
+                    }
+                }
+            }
+
             if (shell.contains("hide-empty-categories")) {
                 hideEmptyCategories = shell["hide-empty-categories"].get<bool>();
             }
@@ -862,6 +880,15 @@ void config::save_to_json() {
         }
 
         config["shell"]["console-mode"] = consoleMode;
+        config["shell"]["library"] = nlohmann::json::object();
+        config["shell"]["library"]["placement"] = nlohmann::json::object();
+        for (const auto& [id, column] : libraryPlacement) {
+            config["shell"]["library"]["placement"][id] = column;
+        }
+        config["shell"]["library"]["order"] = nlohmann::json::object();
+        for (const auto& [column, ids] : libraryOrder) {
+            config["shell"]["library"]["order"][column] = ids;
+        }
         config["shell"]["hide-empty-categories"] = hideEmptyCategories;
         config["shell"]["excluded-categories"] = nlohmann::json::array();
         for (const auto& category : excludedCategories) {

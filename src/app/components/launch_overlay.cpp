@@ -22,6 +22,9 @@ module;
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <future>
+#include <memory>
 #include <string>
 
 module openxmb.app;
@@ -34,33 +37,83 @@ import openxmb.config;
 
 namespace app {
     namespace {
+        constexpr float fade_in_seconds = 0.30F;
+
         float smooth01(float value) {
             value = std::clamp(value, 0.0f, 1.0f);
             return value * value * (3.0f - 2.0f * value);
         }
     }
 
-    launch_overlay::launch_overlay(std::string title) : title(std::move(title)) {}
+    launch_overlay::launch_overlay(std::string title, const std::string& artwork_path,
+        auroreengine::resource_loader& loader) : title(std::move(title))
+    {
+        std::error_code error;
+        if(!artwork_path.empty() && std::filesystem::is_regular_file(artwork_path, error)) {
+            artwork = std::make_unique<auroreengine::texture>(loader.getDevice(), loader.getAllocator());
+            artwork_ready = loader.loadTexture(artwork.get(), artwork_path);
+        }
+    }
+
+    launch_overlay::~launch_overlay() {
+        if(artwork_ready.valid()) artwork_ready.wait();
+    }
+
+    bool launch_overlay::covers_scene() const {
+        return std::chrono::duration<float>(age()).count() > fade_in_seconds;
+    }
 
     void launch_overlay::render(auroreengine::gui_renderer& renderer, shell*) {
         const float seconds = std::chrono::duration<float>(age()).count();
-        renderer.push_color(glm::vec4(1.0f, 1.0f, 1.0f, smooth01(seconds / 0.25f)));
+        const float reveal = smooth01(seconds / fade_in_seconds);
 
         overlay_canvas c(renderer);
-        // Below the crossbar, so the selected tile stays readable.
-        c.rect(0, 0, 1920, 1080, {0, 0, 0, 0.35F});
-        c.rect(0, 760, 1920, 190, {0, 0, 0, 0.55F});
-        c.rect(0, 760, 1920, 1, {1, 1, 1, 0.55F});
-        c.rect(0, 950, 1920, 1, {1, 1, 1, 0.55F});
+        const float left = c.visible_left(), right = c.visible_right();
+        const float top = c.visible_top(), bottom = c.visible_bottom();
+        const float width = right - left, height = bottom - top;
+        const float cx = (left + right) * 0.5F;
 
-        const auto heading = openxmb::localization::shell_locale::translate(std::string("Starting"));
-        c.text(heading + " " + title, 960, 840, 36, {1, 1, 1, 1}, 0, true);
+        // A still backdrop: deep blue falling to black, lit from above.
+        c.gradient(left - 2, top - 2, width + 4, height + 4,
+            xmb_canvas::srgb(13, 26, 66, reveal), xmb_canvas::srgb(2, 4, 12, reveal));
+        c.soft_rect(cx - width * 0.6F, top - height * 0.34F, width * 1.2F, height * 0.80F,
+            xmb_canvas::srgb(70, 120, 230, 0.20F * reveal), height * 0.40F);
 
-        // A bar sweeping back and forth: the launch has no measurable progress.
-        constexpr float track_x = 710, track_w = 500, bar_w = 140, y = 885;
-        c.rect(track_x, y, track_w, 6, {1, 1, 1, 0.18F}, 3);
-        const float phase = 0.5F - 0.5F * std::cos(seconds * 2.4F);
-        c.rect(track_x + (track_w - bar_w) * phase, y, bar_w, 6, {1, 1, 1, 0.85F}, 3);
+        renderer.push_color(glm::vec4(1.0F, 1.0F, 1.0F, reveal));
+
+        // The game's banner on a glass card, at its own proportions.
+        constexpr float card_max_w = 620.0F, card_max_h = 330.0F, pad = 18.0F;
+        float card_bottom = top + height * 0.42F;
+        if(artwork && artwork->loaded && artwork->width > 0 && artwork->height > 0) {
+            const float fit = std::min(card_max_w / static_cast<float>(artwork->width),
+                                       card_max_h / static_cast<float>(artwork->height));
+            const float w = static_cast<float>(artwork->width) * fit;
+            const float h = static_cast<float>(artwork->height) * fit;
+            const float y = top + height * 0.40F - h * 0.5F;
+            c.glass(cx - w * 0.5F - pad, y - pad, w + pad * 2, h + pad * 2, 30.0F, 1.0F, 0.60F);
+            c.image(*artwork, cx - w * 0.5F, y, w, h);
+            card_bottom = y + h + pad;
+        }
+
+        c.text(title, cx, card_bottom + 92.0F, 46, {1, 1, 1, 1}, 0.35F, true);
+
+        // Three lights taking turns: readable at a low frame rate, and honest
+        // about a wait that has no measurable progress.
+        const float dots_y = card_bottom + 150.0F;
+        for(int i = 0; i < 3; ++i) {
+            const float phase = seconds * 1.6F - static_cast<float>(i) * 0.33F;
+            const float lit = 0.5F + 0.5F * std::sin(phase * 2.0F * 3.14159265F / 1.6F);
+            const float size = 13.0F + 5.0F * lit;
+            c.rect(cx + (static_cast<float>(i) - 1.0F) * 38.0F - size * 0.5F, dots_y - size * 0.5F,
+                size, size, {0.80F, 0.90F, 1.0F, 0.28F + 0.72F * lit}, size * 0.5F);
+        }
+
+        if(seconds > 9.0F) {
+            const float hint = smooth01((seconds - 9.0F) / 0.8F);
+            const auto text = openxmb::localization::shell_locale::translate(
+                std::string("The first start can take a minute."));
+            c.text(text, cx, dots_y + 74.0F, 24, {1, 1, 1, 0.62F * hint}, 0, true);
+        }
         renderer.pop_color();
     }
 }

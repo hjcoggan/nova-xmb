@@ -161,6 +161,12 @@ export namespace config
 
             std::unordered_set<std::string> excludedApplications;
             std::unordered_set<std::string> excludedCategories;
+            // Console library: where the player put each item and in what order.
+            // Keys of libraryPlacement are item ids, values are column ids
+            // ("games", "android", "applications"); libraryOrder lists the item
+            // ids of a column from top to bottom.
+            std::unordered_map<std::string,std::string> libraryPlacement;
+            std::unordered_map<std::string,std::vector<std::string>> libraryOrder;
             bool consoleMode = false;
             bool hideEmptyCategories = false;
             bool hideLogin1Options = false;

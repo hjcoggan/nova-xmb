@@ -20,17 +20,22 @@
 
 module;
 
+#include "dialog_text_layout.hpp"
+#include <algorithm>
+#include <array>
 #include <format>
 #include <functional>
 #include <memory>
-#include <ranges>
 #include <string>
+#include <utility>
 #include <vector>
 
 module openxmb.app;
 import :progress_overlay;
 
 import :message_overlay;
+import :xmb_presentation;
+import openxmb.config;
 
 import auroreengine;
 import glm;
@@ -81,51 +86,121 @@ namespace app {
     }
 
     void progress_overlay::render(auroreengine::gui_renderer& renderer, shell* xmb) {
-        renderer.draw_rect(glm::vec2(0.0f, 0.15f), glm::vec2(1.0f, 2.0/renderer.frame_size.height), glm::vec4(0.7f, 0.7f, 0.7f, 1.0f));
-        renderer.draw_rect(glm::vec2(0.0f, 0.85f), glm::vec2(1.0f, 2.0/renderer.frame_size.height), glm::vec4(0.7f, 0.7f, 0.7f, 1.0f));
+        overlay_canvas c(renderer);
+        const float vis_left = c.visible_left();
+        const float vis_right = c.visible_right();
+        const float vis_top = c.visible_top();
+        const float vis_bottom = c.visible_bottom();
+        const float span_w = vis_right - vis_left;
+        const float span_h = vis_bottom - vis_top;
+        const float vis_cx = (vis_left + vis_right) * 0.5f;
+        const float vis_cy = (vis_top + vis_bottom) * 0.5f;
 
-        renderer.draw_text(title, 0.075f, 0.125f, 0.05f);
-        xmb->render_controller_buttons(renderer, 0.5f, 0.9f, std::array{
-            std::pair{action::none, ""},
-            std::pair{action::cancel, "Back"}
-        });
+        c.rect(vis_left - 2.0f, vis_top - 2.0f, span_w + 4.0f, span_h + 4.0f, {0.0f, 0.0f, 0.0f, 0.55f});
 
-        float total_height = 0;
-        float total_width = 0;
-        {
-            std::string_view text = status_message;
-            for(const auto line : std::views::split(text, '\n')) {
-                glm::vec2 size = renderer.measure_text(std::string_view(line), 0.05f);
-                total_height += size.y;
-                total_width = std::max(total_width, size.x);
-            }
+        constexpr float margin = 40.0f;
+        const float max_card_w = std::max(280.0f, span_w - 2.0f * margin);
+        const float max_card_h = std::max(220.0f, span_h - 2.0f * margin);
+        const float card_w = std::min(820.0f, max_card_w);
+        const float content_width = std::max(160.0f, card_w - 120.0f);
+
+        const float ui = config::CONFIG.textScale;
+        const float body_pixels = 24.0f * c.scale * ui;
+        const float title_pixels = 28.0f * c.scale * ui;
+
+        auto title_lines = dialog_text::wrap(title, content_width * c.scale,
+            [&](auto v) { return renderer.text_width_pixels(v, title_pixels); });
+        if(title_lines.size() > 2) {
+            title_lines.resize(2);
+            title_lines.back() = dialog_text::ellipsize(title_lines.back() + "…", content_width * c.scale,
+                [&](auto v) { return renderer.text_width_pixels(v, title_pixels); });
         }
-        float y = 0.425f - total_height;
-        for(const auto line : std::views::split(status_message, '\n')) {
-            std::string_view sv(line);
-            renderer.draw_text(sv, 0.5f-total_width/2, y, 0.05f, glm::vec4(1.0));
-            y += renderer.measure_text(sv, 0.05f).y;
+
+        std::vector<std::string> status_lines;
+        if(!status_message.empty()) {
+            status_lines = dialog_text::wrap(status_message, content_width * c.scale,
+                [&](auto v) { return renderer.text_width_pixels(v, body_pixels); });
+        }
+
+        const auto title_metrics = renderer.text_line_metrics_pixels(title_pixels) / c.scale;
+        const auto body_metrics = renderer.text_line_metrics_pixels(body_pixels) / c.scale;
+
+        const float title_line_h = title_metrics.x + title_metrics.y;
+        const float title_pitch = title_line_h + 8.0f * ui;
+        const float title_block_h = title_lines.empty()
+            ? 0.0f
+            : title_line_h + static_cast<float>(title_lines.size() - 1) * title_pitch;
+
+        const float body_line_h = body_metrics.x + body_metrics.y;
+        const float body_pitch = body_line_h + 8.0f * ui;
+
+        constexpr float top_pad = 36.0f;
+        const float title_status_gap = (!title_lines.empty() && !status_lines.empty()) ? 20.0f : 0.0f;
+        constexpr float track_h = 12.0f;
+        const float bar_gap = show_progress ? 24.0f : 0.0f;
+        const float bar_pct_gap = show_progress ? 18.0f : 0.0f;
+        const float pct_h = show_progress ? body_line_h : 0.0f;
+        constexpr float bottom_gap = 22.0f;
+        constexpr float footer_h = 66.0f;
+
+        const float fixed_h = top_pad + title_block_h + title_status_gap +
+            bar_gap + (show_progress ? track_h : 0.0f) + bar_pct_gap + pct_h +
+            bottom_gap + footer_h;
+
+        std::size_t visible_status = 0;
+        float status_block_h = 0.0f;
+        if(!status_lines.empty()) {
+            const float max_status_h = std::max(body_line_h, max_card_h - fixed_h);
+            const std::size_t cap = dialog_text::line_capacity(max_status_h, body_pitch, body_line_h);
+            visible_status = std::min(status_lines.size(), cap);
+            status_block_h = body_line_h + static_cast<float>(visible_status - 1) * body_pitch;
+        }
+
+        const float card_h = std::min(max_card_h, fixed_h + status_block_h);
+        const float card_x = vis_cx - card_w * 0.5f;
+        const float card_y = std::clamp(vis_cy - card_h * 0.5f, vis_top + margin, vis_bottom - margin - card_h);
+
+        c.glass(card_x, card_y, card_w, card_h, 40.0f, 1.0f, 0.90f);
+
+        const float title_top = card_y + top_pad;
+        for(std::size_t i = 0; i < title_lines.size(); ++i) {
+            c.text(title_lines[i], vis_cx, title_top + title_metrics.x + static_cast<float>(i) * title_pitch,
+                28, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, true);
+        }
+
+        const float status_top = title_top + title_block_h + title_status_gap;
+        for(std::size_t i = 0; i < visible_status; ++i) {
+            c.text(status_lines[i], vis_cx, status_top + body_metrics.x + static_cast<float>(i) * body_pitch,
+                24, {1.0f, 1.0f, 1.0f, 0.92f}, 0.0f, true);
         }
 
         if(show_progress) {
-            simple_renderer::params border_radius{
-                {}, {0.5f, 0.5f, 0.5f, 0.5f}
-            };
-            simple_renderer::params blur{
-                std::array{glm::vec2{0.0f, 0.0f}, glm::vec2{0.0f, 0.0f}, glm::vec2{0.0f, 0.5f}, glm::vec2{0.0f, 0.5f}},
-                {0.5f, 0.5f, 0.5f, 0.5f}
-            };
-            renderer.draw_rect(glm::vec2(0.25f, 0.465f), glm::vec2(0.5f, 0.01f), glm::vec4(0.2f, 0.2f, 0.2f, 1.0f), border_radius);
-            renderer.draw_rect(glm::vec2(0.25f, 0.465f), glm::vec2(0.5f, 0.01f), glm::vec4(0.1f, 0.1f, 0.1f, 1.0f), blur);
+            const float track_w = std::min(560.0f, content_width);
+            const float track_x = vis_cx - track_w * 0.5f;
+            const float track_y = status_top + status_block_h + bar_gap;
+            const float pct = static_cast<float>(std::clamp(progress, 0.0, 1.0));
+            const float fill_w = track_w * pct;
 
-            constexpr glm::vec2 padding = glm::vec2{0.001f, 0.001f};
-            renderer.draw_rect(glm::vec2(0.25f, 0.465f)+padding, glm::vec2(progress*0.5f, 0.01f)-2.0f*padding,
-                glm::vec4(0x83/255.0f, 0x8d/255.0f, 0x22/255.0f, 1.0f), border_radius); // #838d22
-            renderer.draw_rect(glm::vec2(0.25f, 0.465f)+padding, glm::vec2(progress*0.5f, 0.01f)-2.0f*padding,
-                glm::vec4(1.0f, 1.0f, 1.0f, 0.1f), blur);
+            c.rect(track_x, track_y, track_w, track_h, {1.0f, 1.0f, 1.0f, 0.22f}, track_h * 0.5f);
+            if(fill_w > 1.0f) {
+                c.rect(track_x, track_y, fill_w, track_h, {1.0f, 1.0f, 1.0f, 1.0f},
+                    std::min(track_h, fill_w) * 0.5f);
+            }
 
-            renderer.draw_text(std::format("{:.0f}%", progress*100.0), 0.5f, 0.5f, 0.05f, glm::vec4(1.0), true, true);
+            const float pct_baseline = track_y + track_h + bar_pct_gap + body_metrics.x;
+            c.text(std::format("{:.0f}%", pct * 100.0f), vis_cx, pct_baseline,
+                24, {1.0f, 1.0f, 1.0f, 0.90f}, 0.0f, true);
         }
+
+        const auto previous_scale = renderer.text_scale;
+        renderer.text_scale = 1.0f;
+        const float hints_y = (c.oy + (card_y + card_h - footer_h * 0.5f - 4.0f) * c.scale) /
+            static_cast<float>(renderer.frame_size.height);
+        xmb->render_controller_buttons(renderer, 0.5f, hints_y, std::array{
+            std::pair{action::none, ""},
+            std::pair{action::cancel, "Back"}
+        });
+        renderer.text_scale = previous_scale;
     }
 
     result progress_overlay::on_action(action action) {

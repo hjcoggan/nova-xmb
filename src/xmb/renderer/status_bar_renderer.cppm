@@ -441,11 +441,120 @@ constexpr float battery_body_height = 12.0F;
 constexpr float battery_nub_width = 3.0F;
 constexpr float battery_nub_height = 6.0F;
 constexpr float battery_text_gap = 7.0F;
-constexpr float wifi_bar_width = 4.0F;
-constexpr float wifi_bar_gap = 3.0F;
+constexpr float wifi_pi = 3.14159265358979323846F;
+constexpr float wifi_dot_radius = 1.45F;
+constexpr std::array<float, 3> wifi_arc_radii{4.5F, 7.9F, 11.3F};
+constexpr float wifi_arc_half_span = wifi_pi * 0.25F;
+constexpr float wifi_stroke_reference = 1.125F;
+constexpr float wifi_half_span_sine = 0.70710678F;
 constexpr float wifi_indicator_width =
-    wifi_bar_width * 3.0F + wifi_bar_gap * 2.0F;
+    2.0F * wifi_arc_radii.back() * wifi_half_span_sine + wifi_stroke_reference;
+[[maybe_unused]] constexpr float wifi_indicator_height =
+    wifi_arc_radii.back() + wifi_stroke_reference * 0.5F + wifi_dot_radius;
+constexpr std::size_t kWifiDotSegments = 16;
+constexpr std::size_t kWifiArcSegments = 16;
+constexpr std::size_t kWifiCapSegments = 6;
 constexpr float indicator_gap = 12.0F;
+
+[[nodiscard]] auroreengine::simple_renderer::vertex_data
+make_logical_vertex(const ContainedLayout &layout, float x, float y,
+                    glm::vec4 color) noexcept {
+  return {
+      .position = {layout.x(x), layout.y(y)},
+      .color = color,
+      .tex_coords = {},
+  };
+}
+
+void draw_filled_disc(auroreengine::gui_renderer &renderer,
+                      const ContainedLayout &layout, float center_x,
+                      float center_y, float radius, glm::vec4 color) {
+  std::array<auroreengine::simple_renderer::vertex_data, kWifiDotSegments * 3>
+      vertices{};
+  constexpr auto full_turn = 2.0F * wifi_pi;
+  const auto center = make_logical_vertex(layout, center_x, center_y, color);
+  for (std::size_t segment = 0; segment < kWifiDotSegments; ++segment) {
+    const auto angle0 = full_turn * static_cast<float>(segment) /
+                        static_cast<float>(kWifiDotSegments);
+    const auto angle1 = full_turn * static_cast<float>(segment + 1) /
+                        static_cast<float>(kWifiDotSegments);
+    const auto base = segment * 3;
+    vertices[base + 0] = center;
+    vertices[base + 1] = make_logical_vertex(
+        layout, center_x + std::cos(angle0) * radius,
+        center_y + std::sin(angle0) * radius, color);
+    vertices[base + 2] = make_logical_vertex(
+        layout, center_x + std::cos(angle1) * radius,
+        center_y + std::sin(angle1) * radius, color);
+  }
+  renderer.draw_generic(std::span{vertices});
+}
+
+void draw_wifi_arc(auroreengine::gui_renderer &renderer,
+                   const ContainedLayout &layout, float center_x,
+                   float center_y, float radius, float stroke,
+                   glm::vec4 color) {
+  std::array<auroreengine::simple_renderer::vertex_data,
+             kWifiArcSegments * 6 + kWifiCapSegments * 6>
+      vertices{};
+  constexpr auto angle_start = -0.5F * wifi_pi - wifi_arc_half_span;
+  constexpr auto angle_end = -0.5F * wifi_pi + wifi_arc_half_span;
+  const auto half_stroke = stroke * 0.5F;
+  const auto inner = std::max(0.0F, radius - half_stroke);
+  const auto outer = radius + half_stroke;
+
+  for (std::size_t segment = 0; segment < kWifiArcSegments; ++segment) {
+    const auto t0 =
+        static_cast<float>(segment) / static_cast<float>(kWifiArcSegments);
+    const auto t1 =
+        static_cast<float>(segment + 1) / static_cast<float>(kWifiArcSegments);
+    const auto angle0 = angle_start + (angle_end - angle_start) * t0;
+    const auto angle1 = angle_start + (angle_end - angle_start) * t1;
+    const auto cos0 = std::cos(angle0);
+    const auto sin0 = std::sin(angle0);
+    const auto cos1 = std::cos(angle1);
+    const auto sin1 = std::sin(angle1);
+    const auto inner0 = make_logical_vertex(layout, center_x + cos0 * inner,
+                                            center_y + sin0 * inner, color);
+    const auto outer0 = make_logical_vertex(layout, center_x + cos0 * outer,
+                                            center_y + sin0 * outer, color);
+    const auto inner1 = make_logical_vertex(layout, center_x + cos1 * inner,
+                                            center_y + sin1 * inner, color);
+    const auto outer1 = make_logical_vertex(layout, center_x + cos1 * outer,
+                                            center_y + sin1 * outer, color);
+    const auto base = segment * 6;
+    vertices[base + 0] = inner0;
+    vertices[base + 1] = outer0;
+    vertices[base + 2] = inner1;
+    vertices[base + 3] = outer0;
+    vertices[base + 4] = outer1;
+    vertices[base + 5] = inner1;
+  }
+
+  std::size_t cursor = kWifiArcSegments * 6;
+  const auto append_cap = [&](float arc_angle, float sweep_start) {
+    const auto cap_cx = center_x + std::cos(arc_angle) * radius;
+    const auto cap_cy = center_y + std::sin(arc_angle) * radius;
+    const auto cap_center = make_logical_vertex(layout, cap_cx, cap_cy, color);
+    for (std::size_t segment = 0; segment < kWifiCapSegments; ++segment) {
+      const auto a0 = sweep_start + wifi_pi * static_cast<float>(segment) /
+                                        static_cast<float>(kWifiCapSegments);
+      const auto a1 = sweep_start + wifi_pi *
+                                        static_cast<float>(segment + 1) /
+                                        static_cast<float>(kWifiCapSegments);
+      vertices[cursor++] = cap_center;
+      vertices[cursor++] = make_logical_vertex(
+          layout, cap_cx + std::cos(a0) * half_stroke,
+          cap_cy + std::sin(a0) * half_stroke, color);
+      vertices[cursor++] = make_logical_vertex(
+          layout, cap_cx + std::cos(a1) * half_stroke,
+          cap_cy + std::sin(a1) * half_stroke, color);
+    }
+  };
+  append_cap(angle_start, angle_start - wifi_pi);
+  append_cap(angle_end, angle_end);
+  renderer.draw_generic(std::span{vertices});
+}
 
 // Outline, nub and proportional fill. Charging lightens the fill towards green
 // so the state reads without a second glyph.
@@ -484,27 +593,32 @@ void draw_battery_indicator(auroreengine::gui_renderer &renderer,
                     fill);
 }
 
-// Three ascending bars, lit in proportion to the link quality; a present but
-// unassociated interface keeps them dim instead of hiding the indicator.
+// Bottom dot and three concentric arcs, lit from the inside out in proportion
+// to link quality; a present but unassociated interface keeps them dim instead
+// of hiding the indicator.
 void draw_wifi_indicator(auroreengine::gui_renderer &renderer,
                          const ContainedLayout &layout, float left_x,
                          float center_y, int signal, float opacity) {
-  constexpr std::array<float, 3> bar_heights{5.0F, 8.0F, 11.0F};
   const auto stroke = logical_hairline(layout);
   const auto lit = signal <= 0    ? 0
                    : signal >= 70 ? 3
                    : signal >= 40 ? 2
                                   : 1;
-  const auto bottom = center_y + 5.5F;
-  for (std::size_t index = 0; index < bar_heights.size(); ++index) {
-    const auto color = static_cast<int>(index) < lit
-                           ? glm::vec4{1.0F, 1.0F, 1.0F, 0.92F * opacity}
-                           : glm::vec4{1.0F, 1.0F, 1.0F, 0.26F * opacity};
-    const auto bar_height = std::max(bar_heights[index], stroke);
-    draw_logical_rect(renderer, layout,
-                      left_x + static_cast<float>(index) *
-                                   (wifi_bar_width + wifi_bar_gap),
-                      bottom - bar_height, wifi_bar_width, bar_height, color);
+  const auto lit_color = glm::vec4{1.0F, 1.0F, 1.0F, 0.92F * opacity};
+  const auto dim_color = glm::vec4{1.0F, 1.0F, 1.0F, 0.28F * opacity};
+
+  const auto total_height =
+      wifi_arc_radii.back() + stroke * 0.5F + wifi_dot_radius;
+  const auto center_x = left_x + wifi_indicator_width * 0.5F;
+  const auto origin_y = center_y + total_height * 0.5F - wifi_dot_radius;
+
+  draw_filled_disc(renderer, layout, center_x, origin_y, wifi_dot_radius,
+                   lit > 0 ? lit_color : dim_color);
+  for (std::size_t index = 0; index < wifi_arc_radii.size(); ++index) {
+    const auto color =
+        static_cast<int>(index) < lit ? lit_color : dim_color;
+    draw_wifi_arc(renderer, layout, center_x, origin_y, wifi_arc_radii[index],
+                  stroke, color);
   }
 }
 

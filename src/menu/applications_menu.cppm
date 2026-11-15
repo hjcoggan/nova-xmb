@@ -18,8 +18,10 @@
 
 module;
 
+#include <array>
 #include <functional>
 #include <memory>
+#include <string_view>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -62,6 +64,45 @@ std::unique_ptr<action_menu_entry> create_game_menu_entry(
     app::shell* xmb,
     auroreengine::resource_loader& loader
 );
+
+// The console library: the crossbar's Games, Android and Applications columns.
+// Every item is in exactly one of them, either where the player moved it or
+// its default column, and in the order the player left it.
+struct library_column {
+    std::string_view id;
+    std::string_view title;
+    std::string_view icon;
+};
+inline constexpr std::array<library_column, 3> library_columns{{
+    {"games", "Games", "icon_category_game.png"},
+    {"android", "Android", "icon_category_android.png"},
+    {"applications", "Applications", "icon_category_apps.png"},
+}};
+
+// Game manifests plus the desktop entries that make sense on a console.
+std::vector<app_info> scan_library();
+// The column an item is shown in: the player's choice, else its default.
+std::string library_column_of(const app_info& app);
+
+class library_menu : public simple_menu {
+    public:
+        library_menu(std::string name, auroreengine::texture&& icon, std::string column,
+            app::shell* xmb, auroreengine::resource_loader& loader, std::vector<app_info> items);
+        ~library_menu() override = default;
+
+        [[nodiscard]] const std::string& column() const { return column_id; }
+        [[nodiscard]] std::string selected_id() const;
+        [[nodiscard]] std::string selected_title() const;
+        [[nodiscard]] int index_of(std::string_view id) const;
+        // Swaps the selected item with its neighbour and keeps it selected.
+        // False at either end of the column.
+        bool move_selected(int delta);
+        // Records this column's order in the configuration (not yet on disk).
+        void store_order() const;
+    private:
+        std::string column_id;
+        std::vector<app_info> items;
+};
 
 using AppFilter = std::function<bool(const app_info&)>;
 

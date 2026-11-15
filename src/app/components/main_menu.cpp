@@ -671,20 +671,22 @@ void draw_icon(
         return;
     }
 
-    const double slot_width =
-        (custom_icon && target.width > target.height && target.height > 0)
-            ? extent * std::clamp(static_cast<double>(target.width) / static_cast<double>(target.height), 1.0, 1.45)
-            : extent;
-    const auto fitted = fit_texture_in_slot(target, center_x, center_y, slot_width, extent);
+    if(custom_icon) {
+        // Every cover (a game's transparent logo) is fitted inside a box of
+        // one size, whatever its own shape: never stretched or cropped.
+        using lens = openxmb::xmb::SelectionLens;
+        const double card_w = extent * lens::card_width, card_h = extent * lens::card_height;
+        const auto fitted = fit_texture_in_slot(target, center_x, center_y, card_w, card_h);
+        renderer.draw_image(target, layout.x(fitted.x), layout.y(fitted.y),
+            layout.width(fitted.width), layout.height(fitted.height),
+            glm::vec4(1.0F, 1.0F, 1.0F, static_cast<float>(alpha)));
+        return;
+    }
+    const auto fitted = fit_texture_in_slot(target, center_x, center_y, extent, extent);
     const auto x = layout.x(fitted.x);
     const auto y = layout.y(fitted.y);
     const auto width = layout.width(fitted.width);
     const auto height = layout.height(fitted.height);
-    if(custom_icon) {
-        renderer.draw_image(target, x, y, width, height,
-            glm::vec4(1.0F, 1.0F, 1.0F, static_cast<float>(alpha)));
-        return;
-    }
     const auto tint =
         glm::vec4(utils::xmb_icon_colour(openxmb::xmb::wall_clock_now()),
             static_cast<float>(alpha * xmb_web_icon_glass_alpha));
@@ -756,6 +758,13 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
 
     finish_media_transition();
     const bool reloading=!menus.empty();
+    // A reload rebuilds every column; come back to the same one and the same row.
+    std::string previous_column;
+    unsigned int previous_row=0;
+    if(reloading&&selected>=0&&static_cast<std::size_t>(selected)<menus.size()) {
+        previous_column=std::string(menus[static_cast<std::size_t>(selected)]->get_name());
+        previous_row=menus[static_cast<std::size_t>(selected)]->get_selected_submenu();
+    }
     const auto previous_route=settings_controller?settings_controller->route().id:std::string{};
     const auto previous_selection=settings_controller?settings_controller->route().selection:0U;
     current_submenu=nullptr;submenu_stack.clear();in_submenu=false;media_depth_from=media_depth_to=0;
@@ -825,9 +834,6 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
             ? asset_directory/"icons/icon_category_settings.png"
             : preferred_icon(asset_directory, "xmb_icon_001.png", "icon_category_settings.png"),
         loader, xmb, loader));
-    if(config::CONFIG.console_mode()&&!config::CONFIG.hidden_category("applications"))
-    menus.push_back(make_simple<menu::applications_menu>("Applications"_(),
-        asset_directory/"icons/icon_category_apps.png", loader, xmb, loader));
     if(!config::CONFIG.hidden_category("photo")&&folder_has_content(config::CONFIG.pictures_path()))
     menus.push_back(make_simple<menu::files_menu>("Photo"_(),
         preferred_icon(asset_directory, "xmb_icon_002.png", "icon_category_photo.png"), loader, xmb,
@@ -848,43 +854,26 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
         menus.push_back(panel_menu("TV / Video Services",asset_directory/"icons/theme/icon_tv.png",std::move(rows)));
     }
     {
-        // Console layout: split the ~/Games/*/game.json manifests by runtime
-        // into Console Games (emulation/retroarch), PC Games (native/fex/
-        // proton) and Android Games (android/waydroid) instead of the single
-        // desktop "Game" category.
-        const auto console_games_hidden=config::CONFIG.hidden_category("console-games");
-        const auto pc_games_hidden=config::CONFIG.hidden_category("pc-games");
-        const auto android_games_hidden=config::CONFIG.hidden_category("android-games");
-        std::vector<std::unique_ptr<menu::menu_entry>> console_rows;
-        std::vector<std::unique_ptr<menu::menu_entry>> pc_rows;
-        std::vector<std::unique_ptr<menu::menu_entry>> android_rows;
-        if(!console_games_hidden||!pc_games_hidden||!android_games_hidden) {
-            for(const auto& game_app : menu::scan_game_manifests()) {
-                if(config::CONFIG.excludedApplications.contains(game_app.id)) {
-                    continue;
-                }
-                const auto& runtime=game_app.runtime;
-                std::vector<std::unique_ptr<menu::menu_entry>>* rows=nullptr;
-                if(runtime=="emulation"||runtime=="retroarch") rows=&console_rows;
-                else if(runtime=="native"||runtime=="fex"||runtime=="proton") rows=&pc_rows;
-                else if(runtime=="android"||runtime=="waydroid") rows=&android_rows;
-                if(rows) {
-                    rows->push_back(menu::create_game_menu_entry(game_app, xmb, loader));
+        // The library: Games, Android and Applications. Each item is in the
+        // column the player put it in, else the one that suits it; a column
+        // with nothing in it is not shown.
+        std::array<std::vector<menu::app_info>,menu::library_columns.size()> columns;
+        for(auto& item : menu::scan_library()) {
+            const auto column=menu::library_column_of(item);
+            for(std::size_t i=0;i<menu::library_columns.size();++i) {
+                if(menu::library_columns[i].id==column) {
+                    columns[i].push_back(std::move(item));
+                    break;
                 }
             }
         }
-        if(!console_games_hidden) {
-            menus.push_back(panel_menu("Console Games",
-                config::CONFIG.console_mode()
-                    ? asset_directory/"icons/icon_category_console.png"
-                    : preferred_icon(asset_directory,"xmb_icon_005.png","icon_category_game.png"),
-                std::move(console_rows)));
-        }
-        if(!pc_games_hidden) {
-            menus.push_back(panel_menu("PC Games",asset_directory/"icons/icon_category_pc.png",std::move(pc_rows)));
-        }
-        if(!android_games_hidden) {
-            menus.push_back(panel_menu("Android Games",asset_directory/"icons/icon_category_android.png",std::move(android_rows)));
+        for(std::size_t i=0;i<menu::library_columns.size();++i) {
+            const auto& column=menu::library_columns[i];
+            if(columns[i].empty()||config::CONFIG.hidden_category(column.id)) {
+                continue;
+            }
+            menus.push_back(make_simple<menu::library_menu>(std::string(column.title),
+                asset_directory/"icons"/column.icon,loader,std::string(column.id),xmb,loader,std::move(columns[i])));
         }
     }
     if(!config::CONFIG.hidden_category("network")) {
@@ -926,9 +915,22 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
         } else {
             spdlog::warn("Ignoring unsupported {} value", initial_category_env);
         }
-    } else if(config::CONFIG.console_mode()) {
+    } else if(reloading) {
+        selected=std::clamp(selected,0,static_cast<int>(menus.size())-1);
         for(std::size_t i = 0; i < menus.size(); ++i) {
-            if(menus[i]->get_name() == "PC Games") {
+            if(menus[i]->get_name() == previous_column) {
+                selected = static_cast<int>(i);
+                if(const auto rows=menus[i]->get_submenus_count(); rows>0)
+                    menus[i]->select_submenu(std::min(previous_row,rows-1));
+                break;
+            }
+        }
+        last_selected = selected;
+        last_selected_menu_item = menus[static_cast<std::size_t>(selected)]->get_selected_submenu();
+    } else if(config::CONFIG.console_mode()) {
+        // A console opens on its games.
+        for(std::size_t i = 0; i < menus.size(); ++i) {
+            if(const auto* column=dynamic_cast<menu::library_menu*>(menus[i].get())) {
                 selected = static_cast<int>(i);
                 last_selected = selected;
                 last_selected_menu_item = menus[i]->get_selected_submenu();
@@ -942,35 +944,9 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
     const auto catalog_path = asset_directory / "catalog/en.json";
     if(auto loaded = openxmb::xmb::load_catalog_file(catalog_path); loaded) {
         settings_catalog.emplace(std::move(*loaded.value));
-        desktop_settings::populate(*settings_catalog, openxmb::localization::shell_locale::translate);
-        if(config::CONFIG.console_mode()) {
-            // Console mode (shell.console-mode): hide desktop-PC settings rows
-            // that cannot work here -- windowed/borderless display modes and
-            // monitor choice on a fixed panel, autostart .desktop writing,
-            // the browser group, log-folder opening, keyboard bindings and
-            // the "keep running / minimise" launch behaviour of a desktop
-            // session.
-            static constexpr std::array<std::string_view,7> console_hidden_keys{
-                "autostart","display.mode","display.monitor","display.resolution",
-                "debug.logs","games.launch","input.keyboard"};
-            constexpr std::string_view desktop_prefix{"category.settings.desktop."};
-            const auto hidden_node=[&](std::string_view id) {
-                if(id=="category.settings.desktop.Browser") return true;
-                if(id.starts_with("category.settings.desktop.browser.")) return true;
-                if(!id.starts_with(desktop_prefix)) return false;
-                const auto key=id.substr(desktop_prefix.size());
-                return std::find(console_hidden_keys.begin(),console_hidden_keys.end(),key)!=console_hidden_keys.end();
-            };
-            for(auto it=settings_catalog->nodes.begin();it!=settings_catalog->nodes.end();) {
-                if(hidden_node(it->first)) it=settings_catalog->nodes.erase(it);
-                else ++it;
-            }
-            for(auto& [id,node]:settings_catalog->nodes)
-                std::erase_if(node.children,[&](const std::string& child){return !settings_catalog->nodes.contains(child);});
-            auto& root=settings_catalog->nodes.at("category.settings");
-            if(!root.children.empty()&&root.default_selection>=root.children.size())
-                root.default_selection=root.children.size()-1;
-        }
+        // In console mode populate() builds the short handheld layout.
+        desktop_settings::populate(*settings_catalog, openxmb::localization::shell_locale::translate,
+            config::CONFIG.console_mode());
         if(auto created = openxmb::xmb::SettingsCatalogController::create(*settings_catalog); created) {
             settings_controller.emplace(std::move(*created.controller));
             std::unordered_set<std::string> loaded_icon_refs;
@@ -1029,7 +1005,84 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
     }
 }
 
+void main_menu::begin_move() {
+    if(in_submenu||selected<0||static_cast<std::size_t>(selected)>=menus.size()) return;
+    if(dynamic_cast<menu::library_menu*>(menus[static_cast<std::size_t>(selected)].get())==nullptr) return;
+    move_mode=true;
+    move_started=std::chrono::steady_clock::now();
+}
+
+// While an item is being moved: up and down reorder it within its column,
+// left and right carry it to the neighbouring library column, and confirm or
+// back puts it down.
+result main_menu::move_action(action action) {
+    auto* column=dynamic_cast<menu::library_menu*>(menus[static_cast<std::size_t>(selected)].get());
+    if(column==nullptr) {
+        move_mode=false;
+        return result::unsupported;
+    }
+    switch(action) {
+        case action::up:
+        case action::down: {
+            const int delta=action==action::up?-1:1;
+            const auto before=static_cast<int>(column->get_selected_submenu());
+            if(!column->move_selected(delta)) return result::unsupported | result::error_rumble;
+            last_selected_menu_item=before;
+            last_selected_menu_item_transition=std::chrono::steady_clock::now();
+            column->store_order();
+            return result::success | result::ok_sound;
+        }
+        case action::left:
+        case action::right: {
+            std::size_t from=0;
+            for(std::size_t i=0;i<menu::library_columns.size();++i)
+                if(menu::library_columns[i].id==column->column()) from=i;
+            const auto to=static_cast<int>(from)+(action==action::left?-1:1);
+            if(to<0||to>=static_cast<int>(menu::library_columns.size()))
+                return result::unsupported | result::error_rumble;
+            const std::string target(menu::library_columns[static_cast<std::size_t>(to)].id);
+            const auto id=column->selected_id();
+            if(id.empty()) return result::unsupported | result::error_rumble;
+            // Record every column's order as it stands, then put the item at
+            // the end of its new column.
+            for(const auto& entry:menus)
+                if(const auto* other=dynamic_cast<menu::library_menu*>(entry.get())) other->store_order();
+            for(auto& [name,order]:config::CONFIG.libraryOrder) std::erase(order,id);
+            config::CONFIG.libraryOrder[target].push_back(id);
+            config::CONFIG.libraryPlacement[id]=target;
+            config::CONFIG.save_config();
+            xmb->reload_menu();
+            for(std::size_t i=0;i<menus.size();++i) {
+                auto* candidate=dynamic_cast<menu::library_menu*>(menus[i].get());
+                if(candidate==nullptr||candidate->column()!=target) continue;
+                const auto row=candidate->index_of(id);
+                if(static_cast<int>(i)!=selected) {
+                    menus[static_cast<std::size_t>(selected)]->on_close();
+                    last_selected=selected;
+                    last_selected_transition=std::chrono::steady_clock::now();
+                    selected=static_cast<int>(i);
+                    menus[i]->on_open();
+                }
+                if(row>=0) candidate->select_submenu(static_cast<unsigned int>(row));
+                last_selected_menu_item=static_cast<int>(candidate->get_selected_submenu());
+                break;
+            }
+            return result::success | result::ok_sound;
+        }
+        case action::ok:
+        case action::cancel:
+            move_mode=false;
+            move_started=std::chrono::steady_clock::now();
+            column->store_order();
+            config::CONFIG.save_config();
+            return result::success | result::confirm_sound;
+        default:
+            return result::success;
+    }
+}
+
 result main_menu::on_action(action action) {
+    if(move_mode) return move_action(action);
     switch(action) {
         case action::left:
             return select_relative(direction::left) ? result::success | result::ok_sound : result::unsupported | result::error_rumble;
@@ -1757,6 +1810,14 @@ void main_menu::render(auroreengine::gui_renderer& renderer) {
     if(in_submenu_now) {
         xmb->render_controller_buttons(renderer, 0.5f, (config::CONFIG.ui_scale() > 1.0) ? 0.955f : 0.9f, buttons);
     }
+    if(move_mode) {
+        render_move_hint(renderer, now);
+    } else if(!in_submenu_now && !settings_category_active() &&
+              dynamic_cast<menu::library_menu*>(menus[static_cast<std::size_t>(selected)].get()) != nullptr) {
+        const std::vector<std::pair<action, std::string>> library_buttons{
+            {action::ok, "Start"_()}, {action::options, "Options"_()}};
+        xmb->render_controller_buttons(renderer, 0.5f, (config::CONFIG.ui_scale() > 1.0) ? 0.945f : 0.9f, library_buttons, true);
+    }
 }
 
 void main_menu::render_settings_scene(auroreengine::gui_renderer& renderer, time_point now) {
@@ -1857,6 +1918,12 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
             (static_cast<double>(index) - visual_selection) * category_spacing;
         auto center_y = kCategoryBaselineY + (active ? -10.0 : 0.0);
         auto extent = active ? kActiveCategoryIconExtent : kInactiveCategoryIconExtent;
+        // On the console the category icons sit a little smaller, so the
+        // glass lens of the selected row below has room.
+        if(config::CONFIG.console_mode()) {
+            extent *= active ? 0.80 : 0.85;
+            center_y -= active ? 14.0 : 8.0;
+        }
         auto alpha = active ? 0.90 : 0.85;
 
         if(active) {
@@ -1921,15 +1988,41 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
 
             const auto alpha = (focused ? kFocusAlpha : kInactiveItemAlpha) * alpha_multiplier * edge_fade;
             auto& entry = menu.get_submenu(static_cast<unsigned int>(index));
+            if(focused && config::CONFIG.console_mode()) {
+                // The focused row rests on a lens of clear glass; while it is
+                // being moved, on a lit capsule. Same shape in every column.
+                using lens = openxmb::xmb::SelectionLens;
+                const double label_left = SettingsSceneMetrics::label_x + lens::label_shift + x_shift;
+                double text_right = label_left + renderer.text_width_pixels(entry.get_name(),
+                    static_cast<float>(SettingsSceneMetrics::active_label_size * layout.scale)) / layout.scale;
+                if(!entry.get_description().empty())
+                    text_right = std::max(text_right, label_left + renderer.text_width_pixels(entry.get_description(),
+                        static_cast<float>(SettingsSceneMetrics::description_size * layout.scale)) / layout.scale);
+                const auto left = lens::left(SettingsSceneMetrics::icon_center_x + x_shift, extent);
+                const auto right = text_right + lens::right_padding;
+                const auto height = lens::height(extent);
+                const bool grabbed = move_mode && &menu == menus[static_cast<std::size_t>(selected)].get();
+                // The lens settles in as the selection arrives.
+                const auto lens_alpha = static_cast<float>(alpha * (grabbed ? 1.0 : eased));
+                if(grabbed)
+                    canvas.glass_focus(static_cast<float>(left), static_cast<float>(center_y - height * 0.5),
+                        static_cast<float>(right - left), static_cast<float>(height), lens_alpha, static_cast<float>(openxmb::xmb::SelectionLens::radius));
+                else
+                    canvas.glass_clear(static_cast<float>(left), static_cast<float>(center_y - height * 0.5),
+                        static_cast<float>(right - left), static_cast<float>(height), static_cast<float>(openxmb::xmb::SelectionLens::radius), lens_alpha);
+            }
+            // On the console a square icon is fitted to the same box as a
+            // logo: its height is the box's height.
+            const auto icon_extent = (config::CONFIG.console_mode() && !entry.has_custom_icon())
+                ? openxmb::xmb::SelectionLens::box_height(extent) : extent;
             draw_icon(renderer, entry.get_icon(), entry.get_glass_icon(), layout,
-                SettingsSceneMetrics::icon_center_x + x_shift, center_y, extent, alpha,
+                SettingsSceneMetrics::icon_center_x + x_shift, center_y, icon_extent, alpha,
                 entry.has_custom_icon());
 
             const auto& icon_tex = entry.get_icon();
-            const double wide_label_shift =
-                (entry.has_custom_icon() && icon_tex.width > icon_tex.height && icon_tex.height > 0)
-                    ? 48.0
-                    : 0.0;
+            // Covers are cards wider than an icon; their labels move right.
+            const double wide_label_shift = (entry.has_custom_icon() || config::CONFIG.console_mode())
+                ? openxmb::xmb::SelectionLens::label_shift : 0.0;
             const auto label_size = focused ? SettingsSceneMetrics::active_label_size : SettingsSceneMetrics::inactive_label_size;
             const auto text_value = focused ? 1.0f : 235.0f / 255.0f;
             const float item_pulse = 0.8F + 0.4F * std::sin(static_cast<float>(seconds_from_time_point(now)) * 1.848F);
@@ -1980,6 +2073,46 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
             last_selected_menu_item = selected_item;
         }
     }
+}
+
+void main_menu::render_move_hint(auroreengine::gui_renderer& renderer, time_point now) {
+    const auto* column=dynamic_cast<menu::library_menu*>(menus[static_cast<std::size_t>(selected)].get());
+    if(column==nullptr) return;
+    const overlay_canvas canvas(renderer);
+    const auto reveal=static_cast<float>(ease_out_cubic(progress(now,move_started,std::chrono::milliseconds(200))));
+    const float center=(canvas.visible_left()+canvas.visible_right())*0.5F;
+    const float width=std::min(900.0F,canvas.visible_right()-canvas.visible_left()-72.0F);
+    constexpr float height=122.0F;
+    const float top=canvas.visible_bottom()-height-34.0F+(1.0F-reveal)*26.0F;
+    canvas.glass(center-width*0.5F,top,width,height,36.0F,reveal);
+    canvas.text(std::string("Moving ")+column->selected_title(),center,top+50.0F,30,{1,1,1,reveal},0,true);
+    // Arrowheads and words, then the confirm button, on one centred line.
+    using direction=xmb_canvas::arrow_direction;
+    const auto measure=[&](const std::string& text) {
+        return renderer.text_width_pixels(text,22.0F*canvas.scale*static_cast<float>(config::CONFIG.textScale))/canvas.scale;
+    };
+    const std::string reorder="Reorder",change="Change column";
+    constexpr float arrows=38.0F,gap=44.0F,button=150.0F;
+    const float total=arrows+measure(reorder)+gap+arrows+measure(change)+gap+button;
+    float cursor=center-total*0.5F;
+    const float line=top+94.0F,middle=line-8.0F;
+    const glm::vec4 ink{1,1,1,0.85F*reveal};
+    canvas.arrow(cursor+8.0F,middle-7.0F,12.0F,direction::up,ink);
+    canvas.arrow(cursor+8.0F,middle+7.0F,12.0F,direction::down,ink);
+    cursor+=arrows;
+    canvas.text(reorder,cursor,line,22,ink);
+    cursor+=measure(reorder)+gap;
+    canvas.arrow(cursor+4.0F,middle,12.0F,direction::left,ink);
+    canvas.arrow(cursor+20.0F,middle,12.0F,direction::right,ink);
+    cursor+=arrows;
+    canvas.text(change,cursor,line,22,ink);
+    cursor+=measure(change)+gap;
+    renderer.push_color({1,1,1,reveal});
+    const std::vector<std::pair<action, std::string>> done{{action::ok, "Done"_()}};
+    xmb->render_controller_buttons(renderer,
+        (canvas.ox+(cursor+button*0.5F)*canvas.scale)/static_cast<float>(renderer.frame_size.width),
+        (canvas.oy+middle*canvas.scale)/static_cast<float>(renderer.frame_size.height),done);
+    renderer.pop_color();
 }
 
 void main_menu::finish_media_transition() {

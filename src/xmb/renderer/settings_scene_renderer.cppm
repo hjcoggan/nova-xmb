@@ -9,6 +9,7 @@ module;
 #include <chrono>
 #include <cmath>
 #include <span>
+#include <string>
 #include <string_view>
 
 export module openxmb.xmb.settings_scene_renderer;
@@ -117,13 +118,11 @@ void draw_icon(auroreengine::gui_renderer &renderer,
     return;
   }
 
-  double slot_w = row.icon_extent;
-  const double slot_h = row.icon_extent;
-  if (icon.preserve_color && target->width > target->height && target->height > 0) {
-    const double tex_aspect =
-        static_cast<double>(target->width) / static_cast<double>(target->height);
-    slot_w = row.icon_extent * std::clamp(tex_aspect, 1.0, 1.45);
-  }
+  // Covers use the same fixed card as the crossbar (SelectionLens).
+  // On the console every icon fits the shared row box; elsewhere only covers.
+  const bool boxed = icon.preserve_color || config::CONFIG.console_mode();
+  const double slot_w = boxed ? SelectionLens::box_width(row.icon_extent) : row.icon_extent;
+  const double slot_h = boxed ? SelectionLens::box_height(row.icon_extent) : row.icon_extent;
   double draw_w = slot_w;
   double draw_h = slot_h;
   if (target->width > 0 && target->height > 0) {
@@ -153,6 +152,42 @@ void draw_icon(auroreengine::gui_renderer &renderer,
     renderer.draw_image_glass(*target, x, y, w, h, tint);
   else
     renderer.draw_image(*target, x, y, w, h, tint);
+}
+
+// The same clear-glass lens the crossbar puts under its selected row
+// (app::xmb_canvas::glass_clear), drawn in this renderer's layout space.
+void draw_focus_lens(auroreengine::gui_renderer &renderer,
+                     const ContainedLayout &layout, const SettingsRowVisual &row,
+                     double right_x) {
+  const auto alpha = static_cast<float>(row.alpha);
+  if (alpha <= 0.001F) return;
+  const auto rounded = [&](double x, double y, double w, double h,
+                           glm::vec4 colour, double radius) {
+    if (w <= 0 || h <= 0) return;
+    auroreengine::simple_params parameters{};
+    parameters.aspect_ratio = static_cast<float>(w / h);
+    parameters.border_radius.fill(static_cast<float>(std::min(radius / h, 0.5)));
+    renderer.draw_rect({layout.x(x), layout.y(y)},
+                       {static_cast<float>(w * layout.scale / layout.framebuffer_width),
+                        static_cast<float>(h * layout.scale / layout.framebuffer_height)},
+                       colour, parameters);
+  };
+  const auto linear = [](float v) {
+    v /= 255.0F;
+    return v <= 0.04045F ? v / 12.92F : std::pow((v + 0.055F) / 1.055F, 2.4F);
+  };
+  constexpr double rim = 1.6, radius = SelectionLens::radius;
+  const double left = SelectionLens::left(row.icon_center_x, row.icon_extent);
+  const double height = SelectionLens::height(row.icon_extent);
+  const double top = row.center_y - height * 0.5;
+  const double width = right_x - left;
+  rounded(left, top, width, height,
+          {linear(205), linear(222), linear(255), 0.34F * alpha}, radius);
+  rounded(left + rim, top + rim, width - 2 * rim, height - 2 * rim,
+          {linear(20), linear(44), linear(110), 0.34F * alpha}, radius - rim);
+  // Sheen on the upper half.
+  rounded(left + rim, top + rim, width - 2 * rim, (height - 2 * rim) * 0.5,
+          {1, 1, 1, 0.05F * alpha}, radius - rim);
 }
 
 void draw_focused_label(auroreengine::gui_renderer &renderer,
@@ -243,6 +278,9 @@ void SettingsSceneRenderer::render(auroreengine::gui_renderer &renderer,
     if (row.alpha <= 0.001)
       continue;
     row.center_y += focus_y_shift;
+    // The description belongs to its row: without this it stayed at the
+    // unshifted position and ran into the row below.
+    row.description_y += focus_y_shift;
     const auto screen_top_y =
         layout.y(row.center_y - row.icon_extent * 0.5) * layout.framebuffer_height;
     const auto screen_bottom_y =
@@ -261,9 +299,32 @@ void SettingsSceneRenderer::render(auroreengine::gui_renderer &renderer,
     if (edge_fade <= 0.001)
       continue;
     row.alpha *= edge_fade;
+    if (config::CONFIG.console_mode()) {
+      // Labels start where they do in the other columns.
+      row.label_x += SelectionLens::label_shift;
+      row.description_x += SelectionLens::label_shift;
+    }
     row.value_alpha *= edge_fade;
     row.description_alpha *= edge_fade;
 
+    if (row.focused && config::CONFIG.console_mode()) {
+      // Span the label, or the value when the row has one.
+      const auto label_px = renderer.text_width_pixels(
+          row.label, static_cast<float>(row.label_size) * layout.scale) / layout.scale;
+      double right = row.label_x + label_px + SelectionLens::right_padding;
+      if (row.has_description && !row.description.empty()) {
+        // The description is drawn at 22 px and wraps at its maximum width.
+        const auto description_px = std::min(
+            static_cast<double>(renderer.text_width_pixels(row.description, 22.0F * layout.scale)) / layout.scale,
+            row.description_max_width);
+        right = std::max(right, row.description_x + description_px + SelectionLens::right_padding);
+      }
+      if (!options.suppress_value_labels && row.has_value) {
+        right = std::max(right, std::min(row.value_right_x,
+            (layout.framebuffer_width - layout.offset_x) / layout.scale - 48.0) + 24.0);
+      }
+      draw_focus_lens(renderer, layout, row, right);
+    }
     if (const auto *icon = find_icon(icons, row.icon_ref))
       draw_icon(renderer, layout, row, *icon, options.glass_icons);
 
@@ -280,7 +341,28 @@ void SettingsSceneRenderer::render(auroreengine::gui_renderer &renderer,
     if (!options.suppress_value_labels && row.has_value &&
         row.value_alpha > 0.001) {
       const auto size = static_cast<float>(row.value_size)*layout.scale;
-      const auto measured = renderer.text_width_pixels(row.value,size);
+      // The value lives between the end of its label and the right margin;
+      // a long one is shortened rather than drawn over the label.
+      const auto label_size = static_cast<float>(row.label_size)*layout.scale;
+      const auto label_end = layout.offset_x + row.label_x*layout.scale +
+          renderer.text_width_pixels(row.label,label_size) + 36.0F*layout.scale;
+      const auto right_edge = std::min(
+          static_cast<double>(layout.offset_x + row.value_right_x * layout.scale),
+          static_cast<double>(layout.framebuffer_width) - 48.0 * layout.scale);
+      const auto room = static_cast<float>(right_edge - label_end);
+      std::string value(row.value);
+      if (room <= 0.0F) {
+        value.clear();
+      } else if (renderer.text_width_pixels(value,size) > room) {
+        const std::string ellipsis = "\xE2\x80\xA6";
+        while (!value.empty() && renderer.text_width_pixels(value+ellipsis,size) > room) {
+          value.pop_back();
+          while (!value.empty() && (static_cast<unsigned char>(value.back()) & 0xC0) == 0x80) value.pop_back();
+        }
+        while (!value.empty() && value.back() == ' ') value.pop_back();
+        value = value.empty() ? std::string{} : value + ellipsis;
+      }
+      const auto measured = renderer.text_width_pixels(value,size);
       const auto color =
           row.focused
               ? glm::vec3(245.0F / 255.0F, 240.0F / 255.0F, 250.0F / 255.0F)
@@ -288,7 +370,7 @@ void SettingsSceneRenderer::render(auroreengine::gui_renderer &renderer,
       const auto right_x = std::min(
           static_cast<double>(layout.offset_x + row.value_right_x * layout.scale),
           static_cast<double>(layout.framebuffer_width) - 48.0 * layout.scale);
-      renderer.draw_text_pixels(row.value,
+      renderer.draw_text_pixels(value,
           right_x - measured,
           layout.offset_y+(row.center_y+(row.focused?3.0:11.0))*layout.scale,size,
           glm::vec4(color, static_cast<float>(row.value_alpha)),0.7F);

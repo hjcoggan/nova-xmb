@@ -121,15 +121,9 @@ bool choice_overlay::select_relative(action dir) {
 void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* xmb) {
     (void)xmb;
 
-    struct gradient_stop {
-        float position;
-        glm::vec4 colour;
-    };
-
-    // xmb-web's firmware-measured Theme/Colour/Background side panel is a
-    // right-side translucent lavender wash, not a recoloured copy of the active
-    // month.  Keep the XMB visible behind it and interpolate the measured
-    // multi-stop profile with small quads.
+    // A glass sheet on the right, in place of the firmware's lavender wash:
+    // the menu stays visible beside it, slightly dimmed, and the list sits
+    // on smoked glass so it reads over any wallpaper.
     const auto open_elapsed =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - opened_time);
     const auto open_linear = std::clamp(
@@ -137,37 +131,12 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
     const auto open_alpha =
         static_cast<float>(open_linear * open_linear * (3.0 - 2.0 * open_linear));
     overlay_canvas canvas(renderer);
-    const float x_shift = (1.0F - open_alpha) * (12.0F / 1920.0F);
-    constexpr float panel_native_alpha_scale = 0.90F;
     constexpr float panel_right = 1860.0F / 1920.0F;
     const float panel_edge_authored = (panel_right * static_cast<float>(renderer.frame_size.width) - canvas.ox) / canvas.scale;
-    const float x = panel_edge_authored - 357.0F + (1.0F - open_alpha) * 12.0F;
-    const float panel_left = (canvas.ox + (x - 16.0F) * canvas.scale) / static_cast<float>(renderer.frame_size.width);
-    const float panel_right_screen = (canvas.ox + (x + 357.0F) * canvas.scale) / static_cast<float>(renderer.frame_size.width);
-    constexpr std::array<gradient_stop, 8> stops{{
-        {0.000F, {178.0F / 255.0F, 170.0F / 255.0F, 194.0F / 255.0F, 0.00F}},
-        {0.043F, {178.0F / 255.0F, 170.0F / 255.0F, 194.0F / 255.0F, 0.55F}},
-        {0.142F, {151.0F / 255.0F, 141.0F / 255.0F, 174.0F / 255.0F, 0.88F}},
-        {0.300F, {160.0F / 255.0F, 150.0F / 255.0F, 182.0F / 255.0F, 0.80F}},
-        {0.470F, {174.0F / 255.0F, 165.0F / 255.0F, 191.0F / 255.0F, 0.65F}},
-        {0.651F, {195.0F / 255.0F, 189.0F / 255.0F, 210.0F / 255.0F, 0.45F}},
-        {0.820F, {220.0F / 255.0F, 217.0F / 255.0F, 229.0F / 255.0F, 0.22F}},
-        {1.000F, {245.0F / 255.0F, 244.0F / 255.0F, 247.0F / 255.0F, 0.00F}},
-    }}; 
-    for(std::size_t i = 0; i + 1 < stops.size(); ++i) {
-        const float x0 = panel_left + x_shift + (panel_right_screen - panel_left) * stops[i].position;
-        const float x1 = panel_left + x_shift + (panel_right_screen - panel_left) * stops[i + 1].position;
-        auto c0 = stops[i].colour;
-        auto c1 = stops[i + 1].colour;
-        c0.a *= open_alpha * panel_native_alpha_scale;
-        c1.a *= open_alpha * panel_native_alpha_scale;
-        renderer.draw_quad(std::array{
-            auroreengine::simple_renderer::vertex_data{{x0, 0.0f}, c0, {0.0f, 0.0f}},
-            auroreengine::simple_renderer::vertex_data{{x0, 1.0f}, c0, {0.0f, 1.0f}},
-            auroreengine::simple_renderer::vertex_data{{x1, 0.0f}, c1, {1.0f, 0.0f}},
-            auroreengine::simple_renderer::vertex_data{{x1, 1.0f}, c1, {1.0f, 1.0f}},
-        }, auroreengine::simple_renderer::params{});
-    }
+    const float x = panel_edge_authored - 357.0F + (1.0F - open_alpha) * 36.0F;
+    canvas.rect(canvas.visible_left() - 2, canvas.visible_top() - 2,
+        canvas.visible_right() - canvas.visible_left() + 4, canvas.visible_bottom() - canvas.visible_top() + 4,
+        {0.0F, 0.01F, 0.04F, 0.30F * open_alpha});
 
     auto now = std::chrono::system_clock::now();
     double selected = selection_index;
@@ -195,42 +164,64 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
         }
     }
     float top=518-metrics.x;
+    {
+        // Size the sheet to its list: a title if there is one, then the rows,
+        // never taller than the screen.
+        float rows_height=0;
+        for(const auto row:row_heights)rows_height+=row;
+        const float sheet_top=(top_action.empty()?top:top_action_y*1080-metrics.x)-34.0F;
+        const float sheet_bottom=std::min(canvas.visible_bottom()-26.0F,top+rows_height+26.0F);
+        canvas.glass(x-36.0F,sheet_top,357.0F+58.0F,sheet_bottom-sheet_top,34.0F,open_alpha);
+    }
     if(!top_action.empty()) {
         auto labels=dialog_text::wrap(top_action,available_width*canvas.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});
         if(labels.size()>2){labels.resize(2);labels.back()=dialog_text::ellipsize(labels.back()+"…",available_width*canvas.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});}
         const float baseline=top_action_y*1080;
-        for(std::size_t i=0;i<labels.size();++i)canvas.text(labels[i],x,baseline+i*pitch,28,{1,1,1,0.9F*open_alpha});
+        for(std::size_t i=0;i<labels.size();++i)canvas.text(labels[i],x,baseline+i*pitch,24,{0.80F,0.88F,1.0F,0.85F*open_alpha});
         top=std::max(top,baseline+(labels.size()-1)*pitch+metrics.y+24*ui);
     }
-    const float bottom=std::min(1000.0F,canvas.visible_bottom()),viewport=std::max(line_height,bottom-top);
+    const float bottom=std::min(1000.0F,canvas.visible_bottom()-44.0F),viewport=std::max(line_height,bottom-top);
     const auto window=dialog_text::choice_window(row_heights,selection_index,viewport,first_visible);
     first_visible=window.first;
     selected_page_lines=dialog_text::line_capacity(viewport,pitch,line_height);
     selected_total_lines=wrapped_choices.empty()?0:wrapped_choices[selection_index].size();
     text_scroll_line=std::min(text_scroll_line,selected_total_lines>selected_page_lines?selected_total_lines-selected_page_lines:0);
-    renderer.set_clip((canvas.ox+(x-6.0F)*canvas.scale)/renderer.frame_size.width,
-        (canvas.oy+top*canvas.scale)/renderer.frame_size.height,
-        363*canvas.scale/renderer.frame_size.width,viewport*canvas.scale/renderer.frame_size.height);
+    renderer.set_clip((canvas.ox+(x-24.0F)*canvas.scale)/renderer.frame_size.width,
+        (canvas.oy+(top-12.0F)*canvas.scale)/renderer.frame_size.height,
+        (357.0F+34.0F)*canvas.scale/renderer.frame_size.width,(viewport+24.0F)*canvas.scale/renderer.frame_size.height);
     float y=top+metrics.x;
+    const float swatch_inset=swatches.empty()?0.0F:44.0F;
     for(std::size_t i=window.first;i<window.last;++i) {
         const double focus=1-std::clamp(std::abs(static_cast<double>(i)-selected),0.0,1.0);
         const float eased=static_cast<float>(focus*focus*(3-2*focus));
         const bool focused=i==selection_index;
-        if(!swatches.empty()&&!focused&&i<swatches.size()) {
-            canvas.rect(x,y-metrics.x,27,27,{swatches[i],open_alpha});
-        } else {
-            const std::size_t start=focused?text_scroll_line:0;
-            const auto& lines=wrapped_choices[i];
-            const auto count=std::min(lines.size()-start,selected_page_lines);
-            for(std::size_t line=0;line<count;++line)
-                canvas.text(lines[start+line],x,y+line*pitch,24+4*eased,{1,1,1,(0.84F+0.16F*eased)*open_alpha},focused?xmb_canvas::pulse():0);
+        const float row_height=row_heights[i]-12*ui;
+        // The lit capsule follows the selection from row to row.
+        if(eased>0.01F)
+            canvas.glass_focus(x-18.0F,y-metrics.x-9.0F,available_width+30.0F,row_height+18.0F,eased*open_alpha,26.0F);
+        if(i<swatches.size()) {
+            canvas.rect(x-2.0F,y-metrics.x+(line_height-28.0F)*0.5F-1.0F,30,30,{1,1,1,0.55F*open_alpha},8);
+            canvas.rect(x,y-metrics.x+(line_height-28.0F)*0.5F+1.0F,26,26,{swatches[i],open_alpha},6);
         }
+        const std::size_t start=focused?text_scroll_line:0;
+        const auto& lines=wrapped_choices[i];
+        const auto count=std::min(lines.size()-start,selected_page_lines);
+        for(std::size_t line=0;line<count;++line)
+            canvas.text(lines[start+line],x+swatch_inset,y+line*pitch,26,{1,1,1,(0.78F+0.22F*eased)*open_alpha});
         y+=row_heights[i];
     }
     renderer.reset_clip();
-    if(window.first)canvas.text("▲",x,top-12*ui,20,{1,1,1,open_alpha});
-    if(window.last<choices.size())canvas.text("▼",x,std::min(1034.0F,canvas.visible_bottom()-34.0F),20,{1,1,1,open_alpha});
-    if(selected_total_lines>selected_page_lines)canvas.text("← More text →",x,std::min(1064.0F,canvas.visible_bottom()-8.0F),16,{1,1,1,open_alpha});
+    // The font has no arrow glyphs; the markers are drawn.
+    using direction=xmb_canvas::arrow_direction;
+    const float centre=x+available_width*0.5F-12.0F;
+    if(window.first)canvas.arrow(centre,top-20.0F,16.0F,direction::up,{1,1,1,0.85F*open_alpha});
+    if(window.last<choices.size())canvas.arrow(centre,top+viewport+20.0F,16.0F,direction::down,{1,1,1,0.85F*open_alpha});
+    if(selected_total_lines>selected_page_lines) {
+        const float y_more=std::min(1064.0F,canvas.visible_bottom()-8.0F);
+        canvas.arrow(x+6.0F,y_more-6.0F,12.0F,direction::left,{1,1,1,open_alpha});
+        canvas.text("More text",x+20.0F,y_more,16,{1,1,1,open_alpha});
+        canvas.arrow(x+112.0F,y_more-6.0F,12.0F,direction::right,{1,1,1,open_alpha});
+    }
 }
 
 }

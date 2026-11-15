@@ -19,6 +19,8 @@
 module;
 
 #include <chrono>
+#include <future>
+#include <memory>
 #include <string>
 
 export module openxmb.app:launch_overlay;
@@ -32,16 +34,19 @@ import :component;
 
 namespace app {
 
-// "Starting <game>" while a game is being launched and has no window yet. A
-// cold Android or Proton start takes tens of seconds, during which the menu
-// would otherwise look frozen. It takes no input: the shell closes it when the
+// The loading screen shown while a game starts and has no window yet. A cold
+// Android or Proton start takes tens of seconds and loads the whole machine,
+// so this covers the screen and is cheap to draw: the menu and its wallpaper
+// are not rendered behind it. It takes no input; the shell closes it when the
 // game's window appears or the launch ends.
 export class launch_overlay : public component {
     public:
-        explicit launch_overlay(std::string title);
+        launch_overlay(std::string title, const std::string& artwork, auroreengine::resource_loader& loader);
+        ~launch_overlay() override;
 
-        [[nodiscard]] bool is_opaque() const override { return false; }
-        [[nodiscard]] bool do_fade_in() const override { return true; }
+        [[nodiscard]] bool is_opaque() const override { return true; }
+        [[nodiscard]] bool covers_scene() const override;
+        [[nodiscard]] bool do_fade_in() const override { return false; }
         [[nodiscard]] bool do_fade_out() const override { return true; }
         [[nodiscard]] bool keeps_awake() const override { return true; }
         void render(auroreengine::gui_renderer& renderer, class shell* xmb) override;
@@ -51,6 +56,8 @@ export class launch_overlay : public component {
         }
     private:
         std::string title;
+        std::unique_ptr<auroreengine::texture> artwork;
+        std::future<void> artwork_ready;
         std::chrono::steady_clock::time_point start_time{std::chrono::steady_clock::now()};
 };
 

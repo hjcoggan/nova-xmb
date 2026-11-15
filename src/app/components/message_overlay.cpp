@@ -70,13 +70,31 @@ namespace app {
         renderer.push_color(glm::vec4(1.0f, 1.0f, 1.0f, settle));
 
         overlay_canvas c(renderer);
-        c.rect(0,0,1920,1080,{0,0,0,0.25F});
-        c.rect(0,199,1920,680,{0,0,0,0.12F});
-        c.rect(0,199,1920,1,{1,1,1,0.75F});c.rect(0,879,1920,1,{1,1,1,0.75F});
+        const float vis_left = c.visible_left();
+        const float vis_right = c.visible_right();
+        const float vis_top = c.visible_top();
+        const float vis_bottom = c.visible_bottom();
+        const float span_w = vis_right - vis_left;
+        const float span_h = vis_bottom - vis_top;
+        const float vis_cx = (vis_left + vis_right) * 0.5f;
+        const float vis_cy = (vis_top + vis_bottom) * 0.5f;
+
+        c.rect(vis_left - 2.0f, vis_top - 2.0f, span_w + 4.0f, span_h + 4.0f, {0.0f, 0.0f, 0.0f, 0.55f});
+
+        constexpr float margin = 40.0f;
+        const float max_card_w = std::max(280.0f, span_w - 2.0f * margin);
+        const float max_card_h = std::max(240.0f, span_h - 2.0f * margin);
+        const float card_w = std::min(960.0f, max_card_w);
+        const float content_width = std::max(160.0f, card_w - 120.0f);
+        const float choice_row_width = std::max(160.0f, card_w - 80.0f);
+        constexpr float choice_gap = 18.0f;
+        const std::size_t choice_slots = std::max<std::size_t>(1, choices.size());
+        const float choice_slot_w = std::min(360.0f,
+            (choice_row_width - choice_gap * static_cast<float>(choice_slots - 1)) /
+                static_cast<float>(choice_slots));
+
         const float ui=config::CONFIG.textScale;
         const float pixels=24*c.scale*ui;
-        const float content_width=std::min(1150.0f,c.visible_right()-c.visible_left()-120.0f);
-        const float choice_row_width=std::min(1320.0f,c.visible_right()-c.visible_left()-100.0f);
         const auto font=config::CONFIG.fontPath.string();
         if(wrapped_pixels!=pixels||wrapped_font!=font) {
             wrapped_pixels=pixels;wrapped_font=font;
@@ -84,7 +102,7 @@ namespace app {
             if(title_lines.size()>2) {title_lines.resize(2);title_lines.back()=dialog_text::ellipsize(title_lines.back()+"…",content_width*c.scale,[&](auto v){return renderer.text_width_pixels(v,28*c.scale*ui);});}
             body_lines=dialog_text::wrap(message,content_width*c.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});
             choice_lines.clear();
-            const float width=choice_row_width*c.scale/std::max(std::size_t{1},choices.size())-40*c.scale;
+            const float width=std::max(80.0f,choice_slot_w-36.0f)*c.scale;
             for(const auto& choice:choices) {
                 auto lines=dialog_text::wrap(choice,width,[&](auto v){return renderer.text_width_pixels(v,26*c.scale*ui);});
                 if(lines.size()>2){lines.resize(2);lines.back()=dialog_text::ellipsize(lines.back()+"…",width,[&](auto v){return renderer.text_width_pixels(v,26*c.scale*ui);});}
@@ -94,27 +112,104 @@ namespace app {
         const auto title_metrics=renderer.text_line_metrics_pixels(28*c.scale*ui)/c.scale;
         const auto body_metrics=renderer.text_line_metrics_pixels(pixels)/c.scale;
         const auto choice_metrics=renderer.text_line_metrics_pixels(26*c.scale*ui)/c.scale;
-        const auto page=dialog_text::message_layout(title_lines.size(),body_lines.size(),choices.size(),
-            {title_metrics.x,title_metrics.y},{body_metrics.x,body_metrics.y},{choice_metrics.x,choice_metrics.y},ui);
-        const float title_pitch=title_metrics.x+title_metrics.y+8*ui;
-        for(std::size_t i=0;i<title_lines.size();++i)c.text(title_lines[i],960,page.title_last_baseline-(title_lines.size()-1-i)*title_pitch,28,{1,1,1,1},0,true);
-        line_count=body_lines.size();visible_lines=page.capacity;
-        scroll_line=std::min(scroll_line,line_count>visible_lines?line_count-visible_lines:0);
-        for(std::size_t i=0;i<visible_lines&&i+scroll_line<line_count;++i)
-            c.text(body_lines[i+scroll_line],960,page.body_first_baseline+i*page.body_pitch,24,{1,1,1,1},0,true);
-        const float column=choice_row_width/std::max(std::size_t{1},choices.size());
-        const float choice_start=960.0F-choice_row_width*0.5F;
-        for(std::size_t i=0;i<choices.size();++i)for(std::size_t line=0;line<choice_lines[i].size();++line)
-            c.text(choice_lines[i][line],choice_start+column*(i+0.5F),page.choice_first_baseline+line*(choice_metrics.x+choice_metrics.y+8*ui),26,{1,1,1,1},i==selected?xmb_canvas::pulse():0,true);
-        if(line_count>visible_lines) {
-            const float arrow_x=std::min(1540.0f,c.visible_right()-12.0f);
-            if(scroll_line)c.text("▲",arrow_x,page.body_top+body_metrics.x,20);
-            if(scroll_line+visible_lines<line_count)c.text("▼",arrow_x,page.body_bottom,20);
+
+        const float title_line_h = title_metrics.x + title_metrics.y;
+        const float title_pitch = title_line_h + 8.0f * ui;
+        const float title_block_h = title_lines.empty()
+            ? 0.0f
+            : title_line_h + static_cast<float>(title_lines.size() - 1) * title_pitch;
+
+        const float body_line_h = body_metrics.x + body_metrics.y;
+        const float body_pitch = body_line_h + 8.0f * ui;
+
+        const float choice_line_h = choice_metrics.x + choice_metrics.y;
+        const float choice_pitch = choice_line_h + 8.0f * ui;
+        std::size_t max_choice_lines = 1;
+        for(const auto& lines : choice_lines) {
+            max_choice_lines = std::max(max_choice_lines, lines.size());
         }
-        const auto previous_scale=renderer.text_scale;renderer.text_scale=1.0F;
-        xmb->render_controller_buttons(renderer,0.5F,0.84F,std::array{
-            std::pair{action::ok,"Enter"},std::pair{cancelable?action::cancel:action::none,"Back"}});
-        renderer.text_scale=previous_scale;
+        const float choice_text_h = choice_line_h + static_cast<float>(max_choice_lines - 1) * choice_pitch;
+        const float choice_slot_h = choices.empty() ? 0.0f : std::max(64.0f, choice_text_h + 22.0f);
+
+        constexpr float top_pad = 36.0f;
+        const float title_body_gap = title_lines.empty() ? 0.0f : 20.0f;
+        const float body_choice_gap = choices.empty() ? 0.0f : 24.0f;
+        const float choices_footer_gap = choices.empty() ? 22.0f : 16.0f;
+        constexpr float footer_h = 66.0f;
+
+        const float fixed_h = top_pad + title_block_h + title_body_gap +
+            body_choice_gap + choice_slot_h + choices_footer_gap + footer_h;
+        const float max_body_h = std::max(body_line_h, max_card_h - fixed_h);
+        const std::size_t capacity = dialog_text::line_capacity(max_body_h, body_pitch, body_line_h);
+
+        line_count = body_lines.size();
+        visible_lines = std::min(std::max<std::size_t>(1, line_count), capacity);
+        scroll_line = std::min(scroll_line, line_count > visible_lines ? line_count - visible_lines : 0);
+
+        const float body_h = body_line_h + static_cast<float>(visible_lines - 1) * body_pitch;
+        const float card_h = std::min(max_card_h, fixed_h + body_h);
+        const float rise = (1.0f - settle) * 18.0f;
+        const float card_x = vis_cx - card_w * 0.5f;
+        const float card_y = std::clamp(vis_cy - card_h * 0.5f, vis_top + margin, vis_bottom - margin - card_h) + rise;
+
+        c.glass(card_x, card_y, card_w, card_h, 40.0f, 1.0f, 0.90f);
+
+        const float title_top = card_y + top_pad;
+        for(std::size_t i = 0; i < title_lines.size(); ++i) {
+            c.text(title_lines[i], vis_cx, title_top + title_metrics.x + static_cast<float>(i) * title_pitch,
+                28, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, true);
+        }
+
+        const float body_top = title_top + title_block_h + title_body_gap;
+        const float body_bottom = body_top + body_h;
+        for(std::size_t i = 0; i < visible_lines && i + scroll_line < line_count; ++i) {
+            c.text(body_lines[i + scroll_line], vis_cx, body_top + body_metrics.x + static_cast<float>(i) * body_pitch,
+                24, {1.0f, 1.0f, 1.0f, 0.92f}, 0.0f, true);
+        }
+
+        if(line_count > visible_lines) {
+            const float arrow_x = vis_cx + content_width * 0.5f + 24.0f;
+            if(scroll_line > 0) {
+                c.arrow(arrow_x, body_top + 10.0f, 14.0f, xmb_canvas::arrow_direction::up, {1.0f, 1.0f, 1.0f, 0.85f});
+            }
+            if(scroll_line + visible_lines < line_count) {
+                c.arrow(arrow_x, body_bottom - 10.0f, 14.0f, xmb_canvas::arrow_direction::down, {1.0f, 1.0f, 1.0f, 0.85f});
+            }
+        }
+
+        if(!choices.empty()) {
+            const float total_row_w = static_cast<float>(choices.size()) * choice_slot_w +
+                static_cast<float>(choices.size() - 1) * choice_gap;
+            const float row_x = vis_cx - total_row_w * 0.5f;
+            const float slot_y = body_bottom + body_choice_gap;
+            for(std::size_t i = 0; i < choices.size(); ++i) {
+                const float sx = row_x + static_cast<float>(i) * (choice_slot_w + choice_gap);
+                const bool is_selected = (i == selected);
+                if(is_selected) {
+                    c.glass_focus(sx, slot_y, choice_slot_w, choice_slot_h, 1.0f);
+                }
+                const glm::vec4 col = is_selected
+                    ? glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)
+                    : glm::vec4(1.0f, 1.0f, 1.0f, 0.80f);
+                const auto& lines = choice_lines[i];
+                const float ch_h = choice_line_h + static_cast<float>(std::max<std::size_t>(1, lines.size()) - 1) * choice_pitch;
+                const float first_base = slot_y + (choice_slot_h - ch_h) * 0.5f + choice_metrics.x;
+                for(std::size_t line = 0; line < lines.size(); ++line) {
+                    c.text(lines[line], sx + choice_slot_w * 0.5f, first_base + static_cast<float>(line) * choice_pitch,
+                        26, col, 0.0f, true);
+                }
+            }
+        }
+
+        const auto previous_scale = renderer.text_scale;
+        renderer.text_scale = 1.0f;
+        const float hints_y = (c.oy + (card_y + card_h - footer_h * 0.5f - 4.0f) * c.scale) /
+            static_cast<float>(renderer.frame_size.height);
+        xmb->render_controller_buttons(renderer, 0.5f, hints_y, std::array{
+            std::pair{action::ok, "Enter"},
+            std::pair{cancelable ? action::cancel : action::none, "Back"}
+        });
+        renderer.text_scale = previous_scale;
         renderer.pop_color();
     }
 

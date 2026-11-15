@@ -277,14 +277,14 @@ namespace app
         openxmb::music::service().shutdown();
     }
 
-    void shell::begin_launch(const std::string& title)
+    void shell::begin_launch(const std::string& title, const std::string& artwork)
     {
         if(has_launch_overlay()) {
             return;
         }
         launch_menu_had_focus = false;
         launch_started = std::chrono::steady_clock::now();
-        emplace_overlay<app::launch_overlay>(title);
+        emplace_overlay<app::launch_overlay>(title, artwork, *loader);
     }
 
     void shell::end_launch()
@@ -337,7 +337,17 @@ namespace app
                     open_pause("");
                 } else if (msg.rfind("PAUSE ", 0) == 0) {
                     open_pause(msg.substr(6));
-                } else if (msg == "RESUME" || msg == "QUIT") {
+                } else if (msg == "QUIT") {
+                    // Keep the panel up, saying so, until the game is gone.
+                    bool marked = false;
+                    for (auto& overlay : overlays) {
+                        if (auto* pause = dynamic_cast<app::pause_overlay*>(overlay.get())) {
+                            pause->begin_closing();
+                            marked = true;
+                        }
+                    }
+                    if (!marked) close_pause();
+                } else if (msg == "RESUME") {
                     close_pause();
                 } else if (msg == "POWER_MENU") {
                     static bool power_menu_open = false;
@@ -358,6 +368,16 @@ namespace app
                         ov->set_top_action("Power Menu");
                     }
                 }
+            }
+        }
+
+        // A panel that is closing its game goes when the game's process has.
+        for (unsigned int i = 0; i < overlays.size(); ++i) {
+            const auto* pause = dynamic_cast<app::pause_overlay*>(overlays[i].get());
+            if (pause != nullptr && pause->closing() &&
+                (!menu::has_active_child() || pause->closing_for() > std::chrono::seconds(12))) {
+                remove_overlay(i);
+                break;
             }
         }
 
@@ -890,7 +910,7 @@ namespace app
             } catch(const std::exception& error) { spdlog::warn("Theme animation failed: {}",error.what()); }
         }
         const bool retiring_pause_overlay = is_retiring_pause_overlay(old_overlay);
-        const bool overlay_ingame = ingame_mode || has_pause_overlay() || retiring_pause_overlay;
+        const bool overlay_ingame = ingame_mode || has_pause_overlay() || retiring_pause_overlay || game_has_screen;
         if (win) {
             win->config.transparentSurface = overlay_ingame;
         }
@@ -986,7 +1006,10 @@ namespace app
 
             const auto boot = startup_sample();
 
-            if(!overlay_ingame) {
+            // A loading screen that covers everything: skip the wallpaper, so
+            // the starting game gets the processor and the GPU.
+            const bool scene_covered=std::any_of(overlays.begin(),overlays.end(),[](const auto& overlay){return overlay->covers_scene();});
+            if(!overlay_ingame&&!scene_covered) {
                 if(music_scene||music_mix>0.001F||config::CONFIG.backgroundType == config::config::background_type::original) {
                     if(can_render_monthly_background) {
                         try {
@@ -1671,7 +1694,7 @@ namespace app
         bool fading_out_message = (!has_overlay && overlay_transition && old_overlay && (dynamic_cast<app::message_overlay*>(old_overlay.get()) != nullptr));
         // If a message overlay is appearing/disappearing, still render menu during transition
         const bool shell_fade_transition = overlay_transition && top_uses_shell_fade;
-        bool allow_menu = !is_retiring_pause_overlay(old_overlay) &&
+        bool allow_menu = !is_retiring_pause_overlay(old_overlay) && !game_has_screen && !has_pause_overlay() &&
             (render_menu || ((top_is_message || fading_out_message) && shell_fade_transition));
         if(allow_menu){
             const float startup_reveal = static_cast<float>(startup_sample().ui_reveal);
@@ -2115,13 +2138,32 @@ namespace app
             if(has_input_focus) launch_menu_had_focus=true;
             const auto waited=std::chrono::duration_cast<std::chrono::seconds>(
                 std::chrono::steady_clock::now()-launch_started).count();
-            if(!menu::has_active_child()||(launch_menu_had_focus&&!has_input_focus)||waited>600) {
+            const bool game_took_over=menu::has_active_child()&&launch_menu_had_focus&&!has_input_focus;
+            if(!menu::has_active_child()||game_took_over||waited>600) {
                 end_launch();
                 launching=false;
+                game_has_screen=game_took_over;
+                game_focus_returned={};
             }
         }
+        if(!menu::has_active_child()) {
+            game_has_screen=false;
+        } else if(game_has_screen&&has_input_focus&&!has_pause_overlay()&&!is_retiring_pause_overlay(old_overlay)) {
+            // The menu has the focus again but nobody asked for a pause: the
+            // game's window is gone and its process is still finishing (an
+            // Android session takes a few seconds to stop). Show the menu.
+            const auto now=std::chrono::steady_clock::now();
+            if(game_focus_returned.time_since_epoch().count()==0) game_focus_returned=now;
+            else if(now-game_focus_returned>std::chrono::milliseconds(800)) game_has_screen=false;
+        } else {
+            game_focus_returned={};
+        }
         const auto cap=config::CONFIG.maxFPS>10000?0:config::CONFIG.maxFPS;
-        win->config.fpsLimit=child_active?(launching?20.0:1.0):(focused?cap:config::CONFIG.number("power.background.fps",30));
+        // While a game has the screen the menu only clears a transparent
+        // frame, so it can afford to look at the pause socket often: Home then
+        // answers within a frame or two instead of up to a second.
+        const double waiting_fps=launching?20.0:(game_has_screen?20.0:(has_input_focus?30.0:2.0));
+        win->config.fpsLimit=child_active?waiting_fps:(focused?cap:config::CONFIG.number("power.background.fps",30));
         auto& player=openxmb::music::service();
         static bool focus_paused=false;
         if(!focused&&!config::CONFIG.enabled("audio.background")&&player.snapshot().status==openxmb::music::Status::playing) {player.pause();focus_paused=true;}
