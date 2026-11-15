@@ -48,8 +48,10 @@ def prepare_auroreengine(build):
         if source.exists():
             shutil.rmtree(source)
         run('git', 'clone', '--no-checkout', AUROREENGINE_REPOSITORY, source)
-    current = subprocess.check_output(
-        ['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
+    current = subprocess.run(
+        ['git', '-C', str(source), 'rev-parse', 'HEAD'],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        text=True, check=False).stdout.strip()
     if current != AUROREENGINE_REVISION:
         run('git', '-C', source, 'fetch', '--depth=1', 'origin', AUROREENGINE_REVISION)
         run('git', '-C', source, 'checkout', '--detach', 'FETCH_HEAD')
