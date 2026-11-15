@@ -117,6 +117,7 @@ inline int nova_pipe_cloexec(int fds[2]) {
 #ifdef __linux__
     return ::pipe2(fds,O_CLOEXEC);
 #else
+    // Portable fallback; unlike pipe2, setting these flags is not atomic.
     if(::pipe(fds)!=0) return -1;
     for(int i=0;i<2;++i) {
         const int flags=::fcntl(fds[i],F_GETFD);
