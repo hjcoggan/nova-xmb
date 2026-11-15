@@ -634,9 +634,14 @@ class nova_update_item final : public progress_item {
                 last_message=detail.empty()?"System update failed.":detail;
                 failed=true;
             } else if(event=="done") {
-                step_progress=1.0;
-                last_message=detail.empty()?"System is up to date.":detail;
-                finished=true;
+                if(!parsed.value("ok",true)) {
+                    last_message=detail.empty()?"System update failed.":detail;
+                    failed=true;
+                } else {
+                    step_progress=1.0;
+                    last_message=detail.empty()?"System is up to date.":detail;
+                    finished=true;
+                }
             }
         }
         void read_events() {
@@ -684,17 +689,22 @@ class nova_update_item final : public progress_item {
             read_fd=-1;
             if(!discarding_oversized_line) handle_line(std::move(pending));
             int raw=0;
-            while(::waitpid(child_pid,&raw,0)<0 && errno==EINTR) {}
-            const int code=WIFEXITED(raw)?WEXITSTATUS(raw):-1;
+            pid_t waited;
+            do { waited=::waitpid(child_pid,&raw,0); } while(waited<0 && errno==EINTR);
             std::lock_guard<std::mutex> lock(mutex);
-            if(failed || finished) return;
-            if(code!=0) {
+            if(failed) return;
+            if(waited<0) {
                 failed=true;
-                last_message=code>0?std::format("nova-update failed with exit code {}.",code):"nova-update could not be started.";
-            } else {
-                finished=true;
-                step_progress=1.0;
-                if(last_message.empty()) last_message="System update finished.";
+                last_message="Could not wait for nova-update to finish.";
+            } else if(!WIFEXITED(raw)) {
+                failed=true;
+                last_message="nova-update was terminated unexpectedly.";
+            } else if(WEXITSTATUS(raw)!=0) {
+                failed=true;
+                last_message=std::format("nova-update failed with exit code {}.",WEXITSTATUS(raw));
+            } else if(!finished) {
+                failed=true;
+                last_message="nova-update exited without a completion event.";
             }
 #endif
         }
