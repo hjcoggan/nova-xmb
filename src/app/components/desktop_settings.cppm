@@ -627,10 +627,9 @@ class nova_update_item final : public progress_item {
             while(!line.empty() && (line.back()=='\n' || line.back()=='\r')) line.pop_back();
             if(line.empty()) return;
             const auto parsed=nlohmann::json::parse(line,nullptr,false);
-            if(parsed.is_discarded() || !parsed.is_object()) {
-                reject_invalid_event();
-                return;
-            }
+            // Lines that are not events (a warning from sudo or nix on stderr)
+            // are not a failure; the exit status and the done event decide.
+            if(parsed.is_discarded() || !parsed.is_object()) return;
             try {
                 std::lock_guard<std::mutex> lock(mutex);
                 if(failed || done_event || finished) return;
