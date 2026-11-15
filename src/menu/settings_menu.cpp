@@ -28,6 +28,7 @@ module;
 #include <type_traits>
 #include <limits>
 #include <chrono>
+#include <cerrno>
 #include <cmath>
 #include <filesystem>
 #include <format>
@@ -41,6 +42,7 @@ module;
 
 #if __linux__
 #include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 module openxmb.app;
@@ -77,10 +79,13 @@ namespace menu {
                     std::filesystem::path appimageupdatetool = config::CONFIG.exe_directory / "appimageupdatetool";
                     execl(appimageupdatetool.c_str(), "appimageupdatetool", "--overwrite", std::getenv("APPIMAGE"), nullptr);
                     _exit(2);
-                } else {
-                    this->pid = pid;
-                    return status::running;
                 }
+                if(pid < 0) {
+                    message = "Could not start the updater."_();
+                    return status::error;
+                }
+                this->pid = pid;
+                return status::running;
             }
 
             status progress(double& progress, std::string& message) override {
@@ -93,17 +98,23 @@ namespace menu {
                 }
 
                 int status{};
-                if(waitpid(pid, &status, WNOHANG) != 0) {
-                    int exit_code = WEXITSTATUS(status);
-                    if(exit_code == 0) {
-                        message = "Update successful. Please restart the application to apply it."_();
-                        return status::success;
-                    } else {
-                        message = "Failed to update."_();
-                        return status::error;
-                    }
+                pid_t waited;
+                do {
+                    waited = waitpid(pid, &status, WNOHANG);
+                } while(waited < 0 && errno == EINTR);
+                if(waited == 0) return status::running;
+                if(waited < 0 || !WIFEXITED(status)) {
+                    message = "Failed to update."_();
+                    return status::error;
                 }
-                return status::running;
+                int exit_code = WEXITSTATUS(status);
+                if(exit_code == 0) {
+                    message = "Update successful. Please restart the application to apply it."_();
+                    return status::success;
+                } else {
+                    message = "Failed to update."_();
+                    return status::error;
+                }
             }
 
             bool cancel(std::string& message) override {
@@ -128,10 +139,13 @@ namespace menu {
                     std::filesystem::path appimageupdatetool = config::CONFIG.exe_directory / "appimageupdatetool";
                     execl(appimageupdatetool.c_str(), "appimageupdatetool", "--check-for-update", std::getenv("APPIMAGE"), nullptr);
                     _exit(2);
-                } else {
-                    this->pid = pid;
-                    return status::running;
                 }
+                if(pid < 0) {
+                    message = "Could not start the updater."_();
+                    return status::error;
+                }
+                this->pid = pid;
+                return status::running;
             }
             status progress(double& progress, std::string& message) override {
                 auto now = std::chrono::system_clock::now();
@@ -141,27 +155,33 @@ namespace menu {
                 }
 
                 int status{};
-                if(waitpid(pid, &status, WNOHANG) != 0) {
-                    int exit_code = WEXITSTATUS(status);
-                    if(exit_code == 0) {
-                        message = "No updates available."_();
-                        return status::success;
-                    } else if(exit_code == 1) { // This also gets triggered if the update tool is not found or the update check fails. Oh well...
-                        message = {};
-                        xmb->emplace_overlay<app::message_overlay>("Update Available"_(), "An update is available. Would you like to install it?"_(),
-                            std::vector<std::string>{"Yes"_(), "No"_()}, [xmb = this->xmb](unsigned int choice){
-                                if(choice == 0) {
-                                    xmb->emplace_overlay<app::progress_overlay>("Updating"_(), std::make_unique<updater>());
-                                }
-                            }
-                        );
-                        return status::success;
-                    } else {
-                        message = "Failed to check for updates."_();
-                        return status::error;
-                    }
+                pid_t waited;
+                do {
+                    waited = waitpid(pid, &status, WNOHANG);
+                } while(waited < 0 && errno == EINTR);
+                if(waited == 0) return status::running;
+                if(waited < 0 || !WIFEXITED(status)) {
+                    message = "Failed to check for updates."_();
+                    return status::error;
                 }
-                return status::running;
+                int exit_code = WEXITSTATUS(status);
+                if(exit_code == 0) {
+                    message = "No updates available."_();
+                    return status::success;
+                } else if(exit_code == 1) { // This also gets triggered if the update tool is not found or the update check fails. Oh well...
+                    message = {};
+                    xmb->emplace_overlay<app::message_overlay>("Update Available"_(), "An update is available. Would you like to install it?"_(),
+                        std::vector<std::string>{"Yes"_(), "No"_()}, [xmb = this->xmb](unsigned int choice){
+                            if(choice == 0) {
+                                xmb->emplace_overlay<app::progress_overlay>("Updating"_(), std::make_unique<updater>());
+                            }
+                        }
+                    );
+                    return status::success;
+                } else {
+                    message = "Failed to check for updates."_();
+                    return status::error;
+                }
             }
             bool cancel(std::string& message) override {
                 return false;
