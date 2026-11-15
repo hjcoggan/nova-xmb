@@ -146,6 +146,14 @@ inline void populate(openxmb::xmb::Catalog& catalog,
                 if(id=="category.settings.theme.settings.colour" || id=="category.settings.theme.settings.background" || id=="category.settings.theme.settings.day.night") return false;
                 return std::none_of(console_rows.begin(),console_rows.end(),[&](const auto& row){return id=="category.settings.desktop."+std::string(row.key);});
             }),children.end());
+            // Rows follow console_rows, so a group opens on the row the
+            // console lists first; the theme's own rows keep their place.
+            const auto rank=[&](const std::string& id) {
+                for(std::size_t i=0;i<console_rows.size();++i)
+                    if(id=="category.settings.desktop."+std::string(console_rows[i].key)) return static_cast<long>(i);
+                return -1L;
+            };
+            std::stable_sort(children.begin(),children.end(),[&](const auto& a,const auto& b){return rank(a)<rank(b);});
         }
     }
     catalog.strings["category.settings.system.settings.description"]="Adjust settings for the OpenXMB system.";

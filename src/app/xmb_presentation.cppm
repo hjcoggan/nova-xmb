@@ -72,19 +72,6 @@ struct xmb_canvas {
         renderer.draw_rect({(ox+x*scale)/renderer.frame_size.width,(oy+y*scale)/renderer.frame_size.height},
             {w*scale/renderer.frame_size.width,h*scale/renderer.frame_size.height},color,parameters);
     }
-    // A vertical gradient with its own corner radii (top pair, bottom pair).
-    void rounded_gradient(float x,float y,float w,float h,glm::vec4 top,glm::vec4 bottom,float top_radius,float bottom_radius=0) const {
-        if(w<=0||h<=0) return;
-        using V=auroreengine::simple_renderer::vertex_data;
-        auroreengine::simple_params parameters{};
-        parameters.aspect_ratio=w/h;
-        const float tr=std::min(top_radius/h,0.5f),br=std::min(bottom_radius/h,0.5f);
-        parameters.border_radius={tr,tr,br,br};
-        const float left=(ox+x*scale)/renderer.frame_size.width,right=(ox+(x+w)*scale)/renderer.frame_size.width;
-        const float upper=(oy+y*scale)/renderer.frame_size.height,lower=(oy+(y+h)*scale)/renderer.frame_size.height;
-        const std::array<V,4> vertices{V{{left,upper},top,{0,0}},V{{right,upper},top,{1,0}},V{{left,lower},bottom,{0,1}},V{{right,lower},bottom,{1,1}}};
-        renderer.draw_quad(vertices,parameters);
-    }
     // A small solid arrowhead: the font has no arrow glyphs.
     enum class arrow_direction { left, right, up, down };
     void arrow(float cx,float cy,float size,arrow_direction direction,glm::vec4 color) const {

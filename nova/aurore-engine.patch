@@ -1,5 +1,5 @@
 diff --git c/shaders/image_renderer.glass.frag i/shaders/image_renderer.glass.frag
-index 804be6e..49dfd1d 100644
+index 804be6e..fa9a405 100644
 --- c/shaders/image_renderer.glass.frag
 +++ i/shaders/image_renderer.glass.frag
 @@ -5,13 +5,19 @@ layout(location = 0) out vec4 FragColor;
@@ -87,7 +87,7 @@ index 804be6e..49dfd1d 100644
 +        c = max(mix(vec3(grey), c, 1.25), vec3(0.0)) * 1.08 + vec3(0.004);
 +        float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
 +        float tint = pc.material.z;
-+        float dim = clamp(1.0 - (0.10 - tint) / max(lum, 1e-4), 0.0, 1.0) * pc.material.w;
++        float dim = clamp(1.0 - (0.10 - tint - sheen) / max(lum, 1e-4), 0.0, 1.0) * pc.material.w;
 +        body = c * (1.0 - dim) + vec3(tint);
 +    } else {
 +        // No backdrop: an opaque body dark enough for the same contrast.
@@ -636,3 +636,19 @@ index de9922d..55151f7 100644
              );
              if(!win) {
                  throw std::runtime_error(std::string("SDL_CreateWindow failed: ") + sdl::GetError());
+diff --git c/tests/integration/swapchain_policy_tests.cpp i/tests/integration/swapchain_policy_tests.cpp
+index c12a6ef..a9f6b03 100644
+--- c/tests/integration/swapchain_policy_tests.cpp
++++ i/tests/integration/swapchain_policy_tests.cpp
+@@ -6,7 +6,10 @@ int main() {
+     for(unsigned mask=1;mask<16;++mask) {
+         const auto selected=choose_composite_alpha(mask);
+         if(!(selected&mask))return 1;
+-        if((mask&VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)&&selected!=VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)return 2;
++        // nova: premultiplied first (the pause overlay is a per-pixel
++        // transparent window), opaque next.
++        if((mask&VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR)&&selected!=VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR)return 2;
++        if(!(mask&VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR)&&(mask&VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)&&selected!=VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)return 7;
+     }
+     if(choose_composite_alpha(VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR)!=VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR)return 3;
+     if(choose_composite_alpha(VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR)!=VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR)return 4;

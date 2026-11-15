@@ -1,6 +1,9 @@
 #include "openxmb/xmb/glass.hpp"
 #include "openxmb/xmb/pause_backdrop.hpp"
 #include "openxmb/xmb/child_process.hpp"
+#include "openxmb/xmb/ipc_message.hpp"
+#include <fcntl.h>
+#include <sys/socket.h>
 #include <chrono>
 #include <thread>
 #include "openxmb/xmb/settings_scene.hpp"
@@ -207,6 +210,42 @@ void a_finished_child_reports_its_exit() {
           "a missing program does not start");
 }
 
+// The pause socket wakes the menu on connect, before the daemon has written
+// its line; the reader must wait for it instead of dropping the message.
+void a_message_written_after_connect_is_not_lost() {
+  int fds[2];
+  require(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair");
+  fcntl(fds[0], F_SETFL, fcntl(fds[0], F_GETFL) | O_NONBLOCK);
+  std::thread writer([w = fds[1]] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    const char line[] = "PAUSE brotato\n";
+    (void)!write(w, line, sizeof(line) - 1);
+    close(w);
+  });
+  const auto message = openxmb::xmb::read_ipc_message(fds[0], 500);
+  writer.join();
+  close(fds[0]);
+  require(message && *message == "PAUSE brotato", "the late line is read, without its newline");
+}
+
+void an_empty_connection_reads_nothing() {
+  int fds[2];
+  require(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair");
+  fcntl(fds[0], F_SETFL, fcntl(fds[0], F_GETFL) | O_NONBLOCK);
+  close(fds[1]);
+  require(!openxmb::xmb::read_ipc_message(fds[0], 500), "a closed, empty connection gives no message");
+  close(fds[0]);
+  int quiet[2];
+  require(socketpair(AF_UNIX, SOCK_STREAM, 0, quiet) == 0, "socketpair");
+  fcntl(quiet[0], F_SETFL, fcntl(quiet[0], F_GETFL) | O_NONBLOCK);
+  const auto start = std::chrono::steady_clock::now();
+  require(!openxmb::xmb::read_ipc_message(quiet[0], 60), "a silent peer times out");
+  const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+  require(took >= 50 && took < 300, "the wait is bounded by the timeout");
+  close(quiet[0]);
+  close(quiet[1]);
+}
+
 void panels_grow_and_fade() {
   const auto start = glass::panel_in(0);
   require(near(start.alpha, 0) && near(start.scale, 0.96F), "panels start clear and small");
@@ -225,7 +264,7 @@ void engine_shader_implements_the_panel_mode() {
   require(static_cast<bool>(stream), "engine glass shader is readable");
   const std::string source{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
   require(source.find("pc.index==2u") != std::string::npos, "shader has the panel mode");
-  require(source.find("0.10 - tint") != std::string::npos, "shader uses the 0.10 contrast cap");
+  require(source.find("0.10 - tint - sheen") != std::string::npos, "the cap counts the sheen added on top of the body");
   require(source.find("textureLod(uBackdrop") != std::string::npos, "shader samples the mipmapped backdrop");
 }
 
@@ -245,6 +284,8 @@ int main() {
   square_icon_columns_have_no_gap();
   cancelling_a_capture_does_not_block();
   a_finished_child_reports_its_exit();
+  a_message_written_after_connect_is_not_lost();
+  an_empty_connection_reads_nothing();
   pause_panel_waits_for_the_still_at_most_250_ms();
   a_failed_capture_shows_the_fallback_panel();
   a_late_still_is_ignored_after_resume();

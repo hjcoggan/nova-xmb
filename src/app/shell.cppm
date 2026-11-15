@@ -207,9 +207,9 @@ namespace app
                     current+=width+gap+renderer.text_width_pixels(translated,font)+spacing;
                 }
             }
-            // `plate` draws the hints on a glass capsule, for hints that sit
-            // directly on the wallpaper rather than inside a panel.
-            void render_controller_buttons(gui_renderer& renderer, float x, float y, std::ranges::range auto buttons, bool plate=false) {
+            // Free-standing hints for the desktop programs (src/programs);
+            // console screens use render_hint_bar.
+            void render_controller_buttons(gui_renderer& renderer, float x, float y, std::ranges::range auto buttons) {
                 const float fw=static_cast<float>(renderer.frame_size.width),fh=static_cast<float>(renderer.frame_size.height);
                 const float ui=static_cast<float>(config::CONFIG.ui_scale());
                 const float scale=(fh/1080.0F)*ui,height=28.0F*scale,gap=10.0F*scale,spacing=52.0F*scale;
@@ -226,12 +226,6 @@ namespace app
                     parameters.aspect_ratio=pw/ph;parameters.border_radius.fill(std::min(radius/ph,0.5F));
                     renderer.draw_rect({px/fw,py/fh},{pw/fw,ph/fh},colour,parameters);
                 };
-                if(plate&&total>0) {
-                    const float pad_x=26.0F*scale,plate_h=54.0F*scale,rim=1.6F*scale;
-                    const float px=current-pad_x,py=y*fh-plate_h*0.5F,pw=total+2*pad_x;
-                    rounded(px,py,pw,plate_h,{0.55F,0.68F,1.0F,0.26F},plate_h*0.5F);
-                    rounded(px+rim,py+rim,pw-2*rim,plate_h-2*rim,{0.0025F,0.0045F,0.014F,0.62F},plate_h*0.5F-rim);
-                }
                 for(const auto& [a,text]:buttons) {
                     if(a==action::none)continue;const auto i=std::to_underlying(a);const auto width=glyph_width(a);
                     if(!button_labels[i].empty()) {

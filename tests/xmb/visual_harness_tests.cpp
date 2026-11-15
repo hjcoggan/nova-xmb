@@ -96,8 +96,12 @@ void test_runtime_harness_contract(const std::filesystem::path &root) {
 
   const auto choice_overlay =
       read_file(root / "src/app/components/choice_overlay.cpp");
-  require_contains(choice_overlay, "0.88F",
-                   "choice panel ports xmb-web's measured lavender core alpha");
+  // The nova branch draws the side panel as a regular glass sheet in place
+  // of xmb-web's lavender wash.
+  require_contains(choice_overlay, "glass::variant::regular",
+                   "choice panel is a regular glass sheet");
+  require_contains(choice_overlay, "glass::variant::focus",
+                   "choice panel focus is the shared focus capsule");
 }
 
 void test_tooling_present(const std::filesystem::path &root) {

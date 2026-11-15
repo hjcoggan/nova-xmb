@@ -297,55 +297,6 @@ read_sysfs_text(const std::filesystem::path &path) {
   return std::max(0.75F, 1.0F / std::max(0.5F, layout.scale));
 }
 
-void draw_u_frame(auroreengine::gui_renderer &renderer,
-                  const ContainedLayout &layout, float opacity) {
-  constexpr std::array glow_alpha{0.13F, 0.095F, 0.065F, 0.035F, 0.02F};
-  for (std::size_t index = 0; index < glow_alpha.size(); ++index) {
-    const auto inset = static_cast<float>(index + 1);
-    const auto alpha = glow_alpha[index] * opacity;
-    const auto x = StatusBarMetrics::frame_x + inset;
-    const auto y = StatusBarMetrics::frame_y + inset;
-    const auto width = StatusBarMetrics::frame_width + 4.0F - inset -
-                       StatusBarMetrics::frame_corner_radius;
-    const auto height = StatusBarMetrics::frame_height - inset * 2.0F;
-    draw_logical_rect(renderer, layout,
-                      x + StatusBarMetrics::frame_corner_radius, y, width,
-                      1.0F, {1.0F, 1.0F, 1.0F, alpha});
-    draw_logical_rect(renderer, layout, x, y + StatusBarMetrics::frame_corner_radius,
-                      1.0F,
-                      height - StatusBarMetrics::frame_corner_radius * 2.0F,
-                      {1.0F, 1.0F, 1.0F, alpha});
-    draw_logical_rect(renderer, layout,
-                      x + StatusBarMetrics::frame_corner_radius,
-                      y + height - 1.0F, width, 1.0F,
-                      {1.0F, 1.0F, 1.0F, alpha});
-  }
-
-  constexpr auto border_alpha = 0.175F;
-  constexpr auto horizontal_rule_width =
-      StatusBarMetrics::frame_width + 4.0F -
-      StatusBarMetrics::frame_corner_radius;
-  draw_logical_rect(renderer, layout,
-                    StatusBarMetrics::frame_x +
-                        StatusBarMetrics::frame_corner_radius,
-                    StatusBarMetrics::frame_y, horizontal_rule_width, 1.0F,
-                    {1.0F, 1.0F, 1.0F, border_alpha * opacity});
-  draw_logical_rect(renderer, layout, StatusBarMetrics::frame_x,
-                    StatusBarMetrics::frame_y +
-                        StatusBarMetrics::frame_corner_radius,
-                    1.0F,
-                    StatusBarMetrics::frame_height -
-                        StatusBarMetrics::frame_corner_radius * 2.0F,
-                    {1.0F, 1.0F, 1.0F, border_alpha * opacity});
-  draw_logical_rect(renderer, layout,
-                    StatusBarMetrics::frame_x +
-                        StatusBarMetrics::frame_corner_radius,
-                    StatusBarMetrics::frame_y +
-                        StatusBarMetrics::frame_height - 1.0F,
-                    horizontal_rule_width, 1.0F,
-                    {1.0F, 1.0F, 1.0F, border_alpha * opacity});
-}
-
 constexpr std::size_t kRingSegments = 32;
 
 void draw_ring(auroreengine::gui_renderer &renderer,

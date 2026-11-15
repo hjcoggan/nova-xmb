@@ -19,6 +19,7 @@
 module;
 #include "openxmb/xmb/pause_backdrop.hpp"
 #include "openxmb/xmb/child_process.hpp"
+#include "openxmb/xmb/ipc_message.hpp"
 #include <future>
 
 #include <array>
@@ -394,16 +395,14 @@ namespace app
                 if (client < 0) {
                     break;
                 }
-                char buf[256]{};
-                ssize_t n = read(client, buf, sizeof(buf) - 1);
+                // A connect wakes the menu before the peer has written:
+                // wait briefly for the line rather than dropping it.
+                const auto line = openxmb::xmb::read_ipc_message(client, 200);
                 close(client);
-                if (n <= 0) {
+                if (!line) {
                     continue;
                 }
-                std::string msg(buf, static_cast<std::size_t>(n));
-                while (!msg.empty() && (msg.back() == '\n' || msg.back() == '\r' || msg.back() == ' ')) {
-                    msg.pop_back();
-                }
+                const std::string& msg = *line;
                 if (msg == "PAUSE") {
                     open_pause("");
                 } else if (msg.rfind("PAUSE ", 0) == 0) {

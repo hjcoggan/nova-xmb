@@ -20,8 +20,8 @@ int main(int argc,char** argv) try {
     require(catalog.nodes.contains("category.settings.printer.settings"),"future pane assets and source definitions preserved");
     auto made=openxmb::xmb::SettingsCatalogController::create(catalog);require(static_cast<bool>(made),"desktop tree creates controller");
     auto& controller=*made.controller;
-    const auto group=std::find(root.children.begin(),root.children.end(),"category.settings.desktop.Accessory");
-    require(group!=root.children.end(),"accessory group exposed");
+    const auto group=std::find(root.children.begin(),root.children.end(),"category.settings.desktop.System");
+    require(group!=root.children.end(),"system group exposed");
     const auto selection=static_cast<std::size_t>(group-root.children.begin());
     require(static_cast<bool>(controller.set_selection(selection,1)),"select group");
     require(static_cast<bool>(controller.activate(2)),"activate group");
@@ -36,6 +36,20 @@ int main(int argc,char** argv) try {
         require(actions.insert(node.action_id).second,"desktop actions unique");
         require(!catalog.text(node.label_key).empty(),"every row has readable text");
         require(!node.action_id.starts_with("simulate."),"desktop row never simulates successful config writes");
+    }
+    // Console mode keeps each group's rows in the curated order, so a group
+    // opens on the row the console lists first.
+    {
+        auto console_loaded=openxmb::xmb::load_catalog_file(argv[1]);require(static_cast<bool>(console_loaded),"catalog loads again");
+        auto console_catalog=std::move(*console_loaded.value);
+        app::desktop_settings::populate(console_catalog,[](std::string_view text){return std::string(text);},true);
+        const auto& display=console_catalog.nodes.at("category.settings.desktop.Display").children;
+        require(display.size()>=3,"console Display group has its rows");
+        require(display[0]=="category.settings.desktop.display.screen.brightness","Display opens on Screen Brightness");
+        require(display[1]=="category.settings.desktop.ui.scale","Interface Scale second");
+        require(display[2]=="category.settings.desktop.fps","Frame Limit third");
+        const auto& sound=console_catalog.nodes.at("category.settings.desktop.Sound").children;
+        require(!sound.empty()&&sound[0]=="category.settings.desktop.audio.master","Sound opens on Volume");
     }
     std::cout<<"desktop_settings_tests: retained assets, live tree and parent navigation passed\n";
 } catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
