@@ -261,11 +261,27 @@ std::optional<app_info> parse_game_manifest(const std::filesystem::path& manifes
     if(!std::filesystem::is_regular_file(manifest_path, ec)) {
         return std::nullopt;
     }
-    std::ifstream in(manifest_path);
+    constexpr auto max_manifest_bytes = 1024 * 1024;
+    const auto size = std::filesystem::file_size(manifest_path, ec);
+    if(ec || size > max_manifest_bytes) {
+        return std::nullopt;
+    }
+    std::ifstream in(manifest_path, std::ios::binary);
     if(!in) {
         return std::nullopt;
     }
-    const auto json = nlohmann::json::parse(in, nullptr, false);
+    std::string contents(static_cast<std::size_t>(size), '\0');
+    if(size && !in.read(contents.data(), static_cast<std::streamsize>(size))) {
+        return std::nullopt;
+    }
+    char extra{};
+    if(in.read(&extra, 1)) {
+        return std::nullopt;
+    }
+    if(!in.eof()) {
+        return std::nullopt;
+    }
+    const auto json = nlohmann::json::parse(contents, nullptr, false);
     if(!json.is_object() || !manifest_has_valid_command(json)) {
         return std::nullopt;
     }
