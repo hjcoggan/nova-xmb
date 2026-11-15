@@ -35,6 +35,24 @@
 namespace openxmb::integrations {
 namespace detail { std::uintptr_t capture_return_window(); }
 namespace {
+int pipe_cloexec(int fds[2]) {
+#if defined(__linux__)
+  return pipe2(fds, O_CLOEXEC);
+#else
+  if (pipe(fds) != 0) return -1;
+  for (int i = 0; i < 2; ++i) {
+    const int flags = fcntl(fds[i], F_GETFD);
+    if (flags < 0 || fcntl(fds[i], F_SETFD, flags | FD_CLOEXEC) < 0) {
+      const int error = errno;
+      close(fds[0]);
+      close(fds[1]);
+      errno = error;
+      return -1;
+    }
+  }
+  return 0;
+#endif
+}
 std::filesystem::path home_directory() {
 #ifdef _WIN32
   if (const char* value = std::getenv("USERPROFILE")) return value;
@@ -134,7 +152,7 @@ ProcessResult launch_process(const std::vector<std::string>& arguments, const st
   return {true, static_cast<std::int64_t>(process.dwProcessId), "Program started"};
 #else
   int errors[2];
-  if (pipe2(errors, O_CLOEXEC) != 0) return {false, -1, std::strerror(errno)};
+  if (pipe_cloexec(errors) != 0) return {false, -1, std::strerror(errno)};
   std::vector<char*> argv;
   argv.reserve(arguments.size() + 1);
   for (const auto& argument : arguments) argv.push_back(const_cast<char*>(argument.c_str()));

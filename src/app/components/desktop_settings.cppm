@@ -113,6 +113,24 @@ inline ssize_t nova_read_fd(int fd,char* buffer,std::size_t size) {
     struct iovec vec{buffer,size};
     return ::readv(fd,&vec,1);
 }
+inline int nova_pipe_cloexec(int fds[2]) {
+#ifdef __linux__
+    return ::pipe2(fds,O_CLOEXEC);
+#else
+    if(::pipe(fds)!=0) return -1;
+    for(int i=0;i<2;++i) {
+        const int flags=::fcntl(fds[i],F_GETFD);
+        if(flags<0 || ::fcntl(fds[i],F_SETFD,flags|FD_CLOEXEC)<0) {
+            const int error=errno;
+            ::close(fds[0]);
+            ::close(fds[1]);
+            errno=error;
+            return -1;
+        }
+    }
+    return 0;
+#endif
+}
 #endif
 inline int nova_exec_capture(const std::vector<std::string>& args,std::string& stdout_out) {
 #ifdef _WIN32
@@ -125,7 +143,7 @@ inline int nova_exec_capture(const std::vector<std::string>& args,std::string& s
     for(const auto& s:args) c_args.push_back(const_cast<char*>(s.c_str()));
     c_args.push_back(nullptr);
     int pipefd[2]{-1,-1};
-    if(::pipe2(pipefd,O_CLOEXEC)!=0) return -1;
+    if(nova_pipe_cloexec(pipefd)!=0) return -1;
     const pid_t pid=::fork();
     if(pid==0) {
         ::close(pipefd[0]);
@@ -544,7 +562,7 @@ class nova_update_item final : public progress_item {
 #else
             message="Checking for system updates...";
             int pipefd[2]{-1,-1};
-            if(::pipe(pipefd)!=0) {
+            if(nova_pipe_cloexec(pipefd)!=0) {
                 message="Could not open pipe for nova-update.";
                 return status::error;
             }
