@@ -87,10 +87,13 @@ def main():
     compilation = subprocess.run(['cmake', '--build', str(build), '--parallel',
                                   os.environ.get('CMAKE_BUILD_PARALLEL_LEVEL', str(os.cpu_count() or 1)),
                                   '--', '-k', '0'], cwd=ROOT)
-    # Collect independent compilation/test failures in one run. Installing the
-    # actual product is still required before enabling packaging diagnostics.
+    # Collect independent compilation/test failures in one run, but fail before
+    # installing: downstream steps run whenever installed=true is written,
+    # even if this step fails, so success must be reported only after both pass.
     tests = subprocess.run(['ctest', '--test-dir', str(build), '--output-on-failure',
                             '--no-tests=error', '-j', '1'], cwd=ROOT)
+    compilation.check_returncode()
+    tests.check_returncode()
     run('cmake', '--install', build)
     run(sys.executable, ROOT / 'scripts/ci/fonts.py', '--build-dir', build, '--stage', stage)
     stage.mkdir(parents=True, exist_ok=True)
@@ -101,8 +104,6 @@ def main():
     if os.environ.get('GITHUB_OUTPUT'):
         with Path(os.environ['GITHUB_OUTPUT']).open('a') as handle:
             handle.write('installed=true\n')
-    compilation.check_returncode()
-    tests.check_returncode()
 
 
 if __name__ == '__main__':

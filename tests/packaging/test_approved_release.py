@@ -1,4 +1,4 @@
-"""Manual publication must use the exact approved, validated master commit."""
+"""Manual publication must use the exact approved, validated main commit."""
 import importlib.util
 import os
 from pathlib import Path
@@ -13,16 +13,16 @@ SHA = 'a' * 40
 
 
 class ApprovedReleaseTests(unittest.TestCase):
-    def validate(self, approved=SHA, head=SHA, master=SHA, workflow_sha=SHA, event='workflow_dispatch', failed=None):
+    def validate(self, approved=SHA, head=SHA, main=SHA, workflow_sha=SHA, event='workflow_dispatch', failed=None):
         env = {'GITHUB_REPOSITORY': 'example/OpenXMB', 'GITHUB_SHA': workflow_sha,
-               'GITHUB_EVENT_NAME': event, 'GITHUB_REF': 'refs/heads/master'}
-        run = {'status': 'completed', 'conclusion': 'success', 'head_branch': 'master',
+               'GITHUB_EVENT_NAME': event, 'GITHUB_REF': 'refs/heads/main'}
+        run = {'status': 'completed', 'conclusion': 'success', 'head_branch': 'main',
                'event': 'push', 'path': '.github/workflows/release.yml', 'head_sha': head}
         names = ['Release gate', 'Release readiness', 'Ubuntu x86-64 DEB',
                  'Windows x86-64 portable ZIP', 'macOS x86_64', 'macOS arm64', 'Universal macOS DMG',
                  'Portable Linux (ubuntu)', 'Portable Linux (fedora)', 'Portable Linux (arch)']
         jobs = {'jobs': [{'name': name, 'conclusion': 'failure' if name == failed else 'success'} for name in names]}
-        with patch.dict(os.environ, env), patch.object(release, 'api', side_effect=[run, jobs, {'commit': {'sha': master}}]):
+        with patch.dict(os.environ, env), patch.object(release, 'api', side_effect=[run, jobs, {'commit': {'sha': main}}]):
             return release.validated_run_context('123', approved)
 
     def test_success(self):
@@ -31,8 +31,8 @@ class ApprovedReleaseTests(unittest.TestCase):
     def test_mismatched_approved_build(self):
         with self.assertRaises(RuntimeError): self.validate(head='b' * 40)
 
-    def test_moved_master(self):
-        with self.assertRaises(RuntimeError): self.validate(master='b' * 40)
+    def test_moved_main(self):
+        with self.assertRaises(RuntimeError): self.validate(main='b' * 40)
 
     def test_wrong_workflow_checkout(self):
         with self.assertRaises(RuntimeError): self.validate(workflow_sha='b' * 40)

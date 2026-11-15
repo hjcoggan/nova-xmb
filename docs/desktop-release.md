@@ -101,26 +101,26 @@ draws. Enable it with `-DAUROREENGINE_BUILD_RENDER_TESTS=ON` and build that targ
 
 ## Publishing a validated release
 
-The master push workflow builds and validates the Windows portable ZIP, Ubuntu
+The main push workflow builds and validates the Windows portable ZIP, Ubuntu
 DEB, portable Linux archive and universal macOS DMG; it does not create a tag or release. Compilation
 uses the runner's detected CPU count unless `CMAKE_BUILD_PARALLEL_LEVEL` is
 explicitly set. Native regression tests remain serialized.
 
 After the push and release have been authorised, select a successful **Build,
-test and release** push run whose head is the exact master commit intended for
+test and release** push run whose head is the exact main commit intended for
 release. Record that full SHA when dispatching **Publish validated release**:
 
 ```powershell
-gh run list --workflow release.yml --branch master --limit 20
+gh run list --workflow release.yml --branch main --limit 20
 gh run view <RUN_ID>
-gh workflow run publish-validated-release.yml --ref master -f run_id=<RUN_ID> -f approved_sha=<FULL_APPROVED_SHA>
+gh workflow run publish-validated-release.yml --ref main -f run_id=<RUN_ID> -f approved_sha=<FULL_APPROVED_SHA>
 ```
 
 The publication workflow requires the successful push run, its required platform
-jobs, its own checkout and current master to match the approved full SHA. It
+jobs, its own checkout and current main to match the approved full SHA. It
 verifies the four checksums, reserves the tag for that commit, finds an existing
 draft if necessary, uploads the verified assets and publishes only after the
-draft contains exactly those assets. If master advances, validate the new master
+draft contains exactly those assets. If main advances, validate the new main
 commit and confirm it remains within the authorised release scope before
 publication. Dispatching publication is an external write.
 
@@ -128,11 +128,11 @@ For a failed portable Linux check, **Recheck portable Linux archive** tests an
 existing `release-linux` artifact without compiling the other platforms again:
 
 ```sh
-gh workflow run recheck-linux-portable.yml --ref master -f run_id=<BUILD_RUN_ID>
+gh workflow run recheck-linux-portable.yml --ref main -f run_id=<BUILD_RUN_ID>
 ```
 
 This diagnostic workflow uses the same container checks as the release build.
-Its result cannot authorise publication: the complete master push workflow must
+Its result cannot authorise publication: the complete main push workflow must
 still pass at the release commit. Browser failures print the helper log and
 retain readable evidence. The disposable containers allow nested user namespaces
 and procfs mounts so WebKit can establish its own sandbox; the checks require a

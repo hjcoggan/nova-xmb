@@ -2,7 +2,7 @@ name: Windows package diagnostics
 
 on:
   pull_request:
-    branches: [master]
+    branches: [main]
     paths:
       - .github/workflows/windows-diagnostics.yml
       - scripts/ci/windows_startup_probe.cpp

@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: Successful master Build, test and release run ID
+        description: Successful main Build, test and release run ID
         required: true
         type: string
       approved_sha:
-        description: Full approved master commit SHA (must match the validated run and current master)
+        description: Full approved main commit SHA (must match the validated run and current main)
         required: true
         type: string
 
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   publish:
-    if: github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
       contents: write

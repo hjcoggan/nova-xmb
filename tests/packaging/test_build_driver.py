@@ -53,22 +53,22 @@ class BuildDriverTests(unittest.TestCase):
         self.assertTrue((self.stage / 'build-info.json').is_file())
         self.assertEqual(self.outputs.read_text(), 'installed=true\n')
 
-    def test_failed_tests_stage_diagnostics_but_still_fail_the_job(self):
+    def test_failed_tests_fail_before_install_without_staging(self):
         with self.assertRaises(subprocess.CalledProcessError):
             self.invoke(test_status=8)
-        self.assertTrue((self.stage / 'build-info.json').is_file())
-        self.assertEqual(self.outputs.read_text(), 'installed=true\n')
+        self.assertFalse((self.stage / 'build-info.json').is_file())
+        self.assertFalse(self.outputs.exists())
 
     def test_missing_product_after_failed_compilation_cannot_enable_packaging(self):
         with self.assertRaises(subprocess.CalledProcessError):
             self.invoke(build_status=1, fail_command='--install')
         self.assertFalse(self.outputs.exists())
 
-    def test_failed_test_compilation_can_stage_complete_product_but_still_fails(self):
+    def test_failed_compilation_fails_before_install_without_staging(self):
         with self.assertRaises(subprocess.CalledProcessError):
             self.invoke(build_status=1, test_status=8)
-        self.assertTrue((self.stage / 'build-info.json').is_file())
-        self.assertEqual(self.outputs.read_text(), 'installed=true\n')
+        self.assertFalse((self.stage / 'build-info.json').is_file())
+        self.assertFalse(self.outputs.exists())
 
     def test_failed_installation_cannot_enable_packaging(self):
         with self.assertRaises(subprocess.CalledProcessError):

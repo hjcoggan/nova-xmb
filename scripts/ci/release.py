@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish an explicitly approved and validated master release."""
+"""Publish an explicitly approved and validated main release."""
 import argparse
 import hashlib
 import json
@@ -29,19 +29,19 @@ def api(path, missing_ok=False):
 
 
 def validated_run_context(run_id, approved_sha):
-    if os.environ['GITHUB_EVENT_NAME'] != 'workflow_dispatch' or os.environ['GITHUB_REF'] != 'refs/heads/master':
-        raise RuntimeError('Release recovery must run manually from master')
+    if os.environ['GITHUB_EVENT_NAME'] != 'workflow_dispatch' or os.environ['GITHUB_REF'] != 'refs/heads/main':
+        raise RuntimeError('Release recovery must run manually from main')
     if not str(run_id).isdecimal():
         raise RuntimeError('A numeric validated workflow run ID is required')
     if not re.fullmatch(r'[0-9a-f]{40}', approved_sha or ''):
-        raise RuntimeError('The approved master SHA must be a full lowercase commit SHA')
+        raise RuntimeError('The approved main SHA must be a full lowercase commit SHA')
     if os.environ['GITHUB_SHA'] != approved_sha:
         raise RuntimeError('The publication workflow must run at the approved SHA')
     repository = os.environ['GITHUB_REPOSITORY']
     run = api(f'repos/{repository}/actions/runs/{run_id}')
     if (run['status'] != 'completed' or run['conclusion'] != 'success' or
-            run['head_branch'] != 'master' or run['event'] != 'push' or run['path'] != '.github/workflows/release.yml'):
-        raise RuntimeError('Recovery requires a successful master release build')
+            run['head_branch'] != 'main' or run['event'] != 'push' or run['path'] != '.github/workflows/release.yml'):
+        raise RuntimeError('Recovery requires a successful main release build')
     if run['head_sha'] != approved_sha:
         raise RuntimeError('The validated build does not match the approved SHA')
     required = {'Release gate', 'Release readiness', 'Ubuntu x86-64 DEB',
@@ -51,8 +51,8 @@ def validated_run_context(run_id, approved_sha):
     passed = {job['name'] for job in jobs if job['conclusion'] == 'success'}
     if not required <= passed:
         raise RuntimeError('Recovery build is missing successful required checks: ' + str(required - passed))
-    if api(f'repos/{repository}/branches/master')['commit']['sha'] != approved_sha:
-        raise RuntimeError('Master no longer points to the approved SHA')
+    if api(f'repos/{repository}/branches/main')['commit']['sha'] != approved_sha:
+        raise RuntimeError('Main no longer points to the approved SHA')
     return repository, approved_sha, True
 
 
@@ -123,7 +123,7 @@ def main():
     if release and release['target_commitish'] != sha:
         raise RuntimeError('The release already targets a different commit')
     if release and not release['draft']:
-        print('The verified master release has already been published; nothing changed.')
+        print('The verified main release has already been published; nothing changed.')
         return
     # Check the tag even for existing drafts so recovery cannot upload to a
     # tag that was moved or created for another commit.
