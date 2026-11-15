@@ -22,6 +22,7 @@ inline std::optional<std::string> read_ipc_message(int fd, int timeout_ms, std::
   using clock = std::chrono::steady_clock;
   const auto deadline = clock::now() + std::chrono::milliseconds(timeout_ms);
   std::string text;
+  bool oversized = false;
   for (;;) {
     char buf[128];
     const ssize_t n = read(fd, buf, sizeof(buf));
@@ -29,11 +30,15 @@ inline std::optional<std::string> read_ipc_message(int fd, int timeout_ms, std::
       text.append(buf, static_cast<std::size_t>(n));
       const auto newline = text.find('\n');
       if (newline != std::string::npos) {
+        if (newline > limit) {
+          oversized = true;
+          break;
+        }
         text.resize(newline);
         break;
       }
-      if (text.size() >= limit) {
-        text.resize(limit);
+      if (text.size() > limit) {
+        oversized = true;
         break;
       }
       continue;
@@ -53,6 +58,7 @@ inline std::optional<std::string> read_ipc_message(int fd, int timeout_ms, std::
     if ((p.revents & (POLLERR | POLLNVAL)) && !(p.revents & POLLIN)) break;
     if ((p.revents & (POLLIN | POLLHUP)) == 0) break;
   }
+  if (oversized) return std::nullopt;
   while (!text.empty() && (text.back() == '\r' || text.back() == ' ' || text.back() == '\n')) text.pop_back();
   if (text.empty()) return std::nullopt;
   return text;

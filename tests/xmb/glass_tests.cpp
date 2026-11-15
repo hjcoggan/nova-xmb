@@ -294,6 +294,17 @@ void iwctl_parsers_match_exact_fields_and_strip_ansi() {
           "disconnected station returns empty network name");
 }
 
+void an_oversized_ipc_message_is_rejected() {
+  int fds[2];
+  require(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "oversized socketpair");
+  fcntl(fds[0], F_SETFL, fcntl(fds[0], F_GETFL) | O_NONBLOCK);
+  const char line[] = "PAUSE abcdef\n";
+  require(write(fds[1], line, sizeof(line) - 1) == static_cast<ssize_t>(sizeof(line) - 1), "write oversized message");
+  close(fds[1]);
+  require(!openxmb::xmb::read_ipc_message(fds[0], 500, 8), "an over-limit command is rejected, not truncated");
+  close(fds[0]);
+}
+
 void panels_grow_and_fade() {
   const auto start = glass::panel_in(0);
   require(near(start.alpha, 0) && near(start.scale, 0.96F), "panels start clear and small");
@@ -336,6 +347,7 @@ int main() {
   an_empty_connection_reads_nothing();
   fatal_fd_errors_do_not_spin_timeout();
   iwctl_parsers_match_exact_fields_and_strip_ansi();
+  an_oversized_ipc_message_is_rejected();
   pause_panel_waits_for_the_still_at_most_250_ms();
   a_failed_capture_shows_the_fallback_panel();
   a_late_still_is_ignored_after_resume();
