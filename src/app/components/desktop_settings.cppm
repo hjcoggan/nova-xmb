@@ -611,14 +611,14 @@ class nova_update_item final : public progress_item {
 
         void reject_oversized_event() {
             std::lock_guard<std::mutex> lock(mutex);
-            if(!failed && !finished) {
+            if(!failed && !done_event && !finished) {
                 failed=true;
                 last_message="System update emitted an oversized event.";
             }
         }
         void reject_invalid_event() {
             std::lock_guard<std::mutex> lock(mutex);
-            if(!failed && !finished) {
+            if(!failed && !done_event && !finished) {
                 failed=true;
                 last_message="nova-update emitted an invalid event.";
             }
@@ -633,7 +633,7 @@ class nova_update_item final : public progress_item {
             }
             try {
                 std::lock_guard<std::mutex> lock(mutex);
-                if(failed || finished) return;
+                if(failed || done_event || finished) return;
                 const auto event=parsed.value("event",std::string{});
                 const auto detail=parsed.value("detail",std::string{});
                 if(event=="progress") {
@@ -653,7 +653,7 @@ class nova_update_item final : public progress_item {
                     } else {
                         step_progress=1.0;
                         last_message=detail.empty()?"System is up to date.":detail;
-                        finished=true;
+                        done_event=true;
                     }
                 }
             } catch(const nlohmann::json::exception&) {
@@ -718,9 +718,11 @@ class nova_update_item final : public progress_item {
             } else if(WEXITSTATUS(raw)!=0) {
                 failed=true;
                 last_message=std::format("nova-update failed with exit code {}.",WEXITSTATUS(raw));
-            } else if(!finished) {
+            } else if(!done_event) {
                 failed=true;
                 last_message="nova-update exited without a completion event.";
+            } else {
+                finished=true;
             }
 #endif
         }
@@ -730,6 +732,7 @@ class nova_update_item final : public progress_item {
         long child_pid=-1;
         std::optional<double> step_progress;
         std::string last_message="Checking for system updates...";
+        bool done_event=false;
         bool finished=false;
         bool failed=false;
 };
