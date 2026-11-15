@@ -1,0 +1,33 @@
+# Builds the menu the way nova-nix does and runs its native test suite
+# (openxmb-tests). This is the gate for this fork; the desktop release
+# workflows inherited from OpenXMB only run on its `master` branch.
+name: Menu tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: menu-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  openxmb-tests:
+    # nova-nix only defines aarch64-linux outputs.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: nova-xmb
+      - uses: actions/checkout@v4
+        with:
+          repository: hjcoggan/nova-nix
+          ref: main
+          path: nova-nix
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: Build and run the tests
+        working-directory: nova-nix
+        run: nix build .#openxmb-tests --override-input nova-xmb path:${{ github.workspace }}/nova-xmb --no-link -L
