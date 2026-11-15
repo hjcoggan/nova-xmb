@@ -134,8 +134,7 @@ ProcessResult launch_process(const std::vector<std::string>& arguments, const st
   return {true, static_cast<std::int64_t>(process.dwProcessId), "Program started"};
 #else
   int errors[2];
-  if (pipe(errors) != 0) return {false, -1, std::strerror(errno)};
-  fcntl(errors[1], F_SETFD, FD_CLOEXEC);
+  if (pipe2(errors, O_CLOEXEC) != 0) return {false, -1, std::strerror(errno)};
   std::vector<char*> argv;
   argv.reserve(arguments.size() + 1);
   for (const auto& argument : arguments) argv.push_back(const_cast<char*>(argument.c_str()));

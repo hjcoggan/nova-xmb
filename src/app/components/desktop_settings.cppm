@@ -125,7 +125,7 @@ inline int nova_exec_capture(const std::vector<std::string>& args,std::string& s
     for(const auto& s:args) c_args.push_back(const_cast<char*>(s.c_str()));
     c_args.push_back(nullptr);
     int pipefd[2]{-1,-1};
-    if(::pipe(pipefd)!=0) return -1;
+    if(::pipe2(pipefd,O_CLOEXEC)!=0) return -1;
     const pid_t pid=::fork();
     if(pid==0) {
         ::close(pipefd[0]);
@@ -544,7 +544,7 @@ class nova_update_item final : public progress_item {
 #else
             message="Checking for system updates...";
             int pipefd[2]{-1,-1};
-            if(::pipe(pipefd)!=0) {
+            if(::pipe2(pipefd,O_CLOEXEC)!=0) {
                 message="Could not open pipe for nova-update.";
                 return status::error;
             }
