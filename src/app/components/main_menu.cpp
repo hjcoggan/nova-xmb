@@ -615,6 +615,39 @@ struct ps3_colour_entry {
     return false;
 }
 
+struct fitted_icon_box {
+    double x{};
+    double y{};
+    double width{};
+    double height{};
+};
+
+/// Fits `texture` uniformly inside a logical slot of `slot_width` x `slot_height`
+/// centred at (`center_x`, `center_y`) without cropping or non-uniform scaling.
+[[nodiscard]] fitted_icon_box fit_texture_in_slot(
+    const auroreengine::texture& texture,
+    double center_x,
+    double center_y,
+    double slot_width,
+    double slot_height
+) noexcept {
+    double draw_width = slot_width;
+    double draw_height = slot_height;
+    if(texture.width > 0 && texture.height > 0 && slot_width > 0.0 && slot_height > 0.0) {
+        const double tex_w = static_cast<double>(texture.width);
+        const double tex_h = static_cast<double>(texture.height);
+        const double fit = std::min(slot_width / tex_w, slot_height / tex_h);
+        draw_width = tex_w * fit;
+        draw_height = tex_h * fit;
+    }
+    return {
+        .x = center_x - draw_width * 0.5,
+        .y = center_y - draw_height * 0.5,
+        .width = draw_width,
+        .height = draw_height,
+    };
+}
+
 void draw_icon(
     auroreengine::gui_renderer& renderer,
     const auroreengine::texture& texture,
@@ -630,24 +663,33 @@ void draw_icon(
         return;
     }
 
-    const double slot_extent =
-        (custom_icon && texture.width > texture.height && texture.height > 0)
-            ? extent * std::clamp(static_cast<double>(texture.width) / static_cast<double>(texture.height), 1.0, 1.45)
+    const bool use_glass =
+        !custom_icon && config::CONFIG.iconGlassRefraction &&
+        glass_texture != nullptr && glass_texture->loaded;
+    const auto& target = use_glass ? *glass_texture : texture;
+    if(!target.loaded) {
+        return;
+    }
+
+    const double slot_width =
+        (custom_icon && target.width > target.height && target.height > 0)
+            ? extent * std::clamp(static_cast<double>(target.width) / static_cast<double>(target.height), 1.0, 1.45)
             : extent;
-    const auto x = layout.x(center_x - slot_extent * 0.5);
-    const auto y = layout.y(center_y - slot_extent * 0.5);
-    const auto width = layout.width(slot_extent);
-    const auto height = layout.height(slot_extent);
+    const auto fitted = fit_texture_in_slot(target, center_x, center_y, slot_width, extent);
+    const auto x = layout.x(fitted.x);
+    const auto y = layout.y(fitted.y);
+    const auto width = layout.width(fitted.width);
+    const auto height = layout.height(fitted.height);
     if(custom_icon) {
-        renderer.draw_image_a(texture, x, y, width, height,
+        renderer.draw_image(target, x, y, width, height,
             glm::vec4(1.0F, 1.0F, 1.0F, static_cast<float>(alpha)));
         return;
     }
     const auto tint =
         glm::vec4(utils::xmb_icon_colour(openxmb::xmb::wall_clock_now()),
             static_cast<float>(alpha * xmb_web_icon_glass_alpha));
-    if(config::CONFIG.iconGlassRefraction && glass_texture != nullptr && glass_texture->loaded) {
-        renderer.draw_image_glass(*glass_texture, x, y, width, height, tint);
+    if(use_glass) {
+        renderer.draw_image_glass(target, x, y, width, height, tint);
     } else {
         const auto flat_alpha =
             extent >= kActiveItemIconExtent - 0.5
@@ -655,7 +697,7 @@ void draw_icon(
                 : alpha;
         const auto flat_tint =
             glm::vec4(utils::xmb_icon_colour(openxmb::xmb::wall_clock_now()), static_cast<float>(flat_alpha));
-        renderer.draw_image_a(texture, x, y, width, height, flat_tint);
+        renderer.draw_image(target, x, y, width, height, flat_tint);
     }
 }
 
@@ -669,13 +711,23 @@ void draw_normalized_icon(
     double height,
     glm::vec4 tint = glm::vec4{1.0F}
 ) {
+    const bool use_glass =
+        config::CONFIG.iconGlassRefraction && glass_texture != nullptr && glass_texture->loaded;
+    const auto& target = use_glass ? *glass_texture : texture;
+    if(!target.loaded) {
+        return;
+    }
+
+    const auto fitted = fit_texture_in_slot(target, width * 0.5, height * 0.5, width, height);
+    const float draw_x = x + static_cast<float>(fitted.x / std::max(1.0, renderer.aspect_ratio));
+    const float draw_y = y + static_cast<float>(fitted.y);
     tint *= glm::vec4(utils::xmb_icon_colour(openxmb::xmb::wall_clock_now()), 1.0F);
-    if(config::CONFIG.iconGlassRefraction && glass_texture != nullptr && glass_texture->loaded) {
-        renderer.draw_image_glass(*glass_texture, x, y,
-            static_cast<float>(width), static_cast<float>(height), tint);
+    if(use_glass) {
+        renderer.draw_image_glass(target, draw_x, draw_y,
+            static_cast<float>(fitted.width), static_cast<float>(fitted.height), tint);
     } else {
-        renderer.draw_image_a(texture, x, y,
-            static_cast<float>(width), static_cast<float>(height), tint);
+        renderer.draw_image(target, draw_x, draw_y,
+            static_cast<float>(fitted.width), static_cast<float>(fitted.height), tint);
     }
 }
 
@@ -1691,7 +1743,7 @@ void main_menu::render(auroreengine::gui_renderer& renderer) {
         }
     }
 
-    if(settings_catalog)for(const auto& [id,node]:settings_catalog->nodes)if(node.action_id.starts_with("desktop."))settings_value_labels[id]=desktop_settings::display_value(node.action_id.substr(8),xmb);
+    if(settings_category_active()&&settings_catalog)for(const auto& [id,node]:settings_catalog->nodes)if(node.action_id.starts_with("desktop."))settings_value_labels[id]=desktop_settings::display_value(node.action_id.substr(8),xmb);
     render_crossbar(renderer, now);
     if(settings_category_active()) {
         render_settings_scene(renderer, now);

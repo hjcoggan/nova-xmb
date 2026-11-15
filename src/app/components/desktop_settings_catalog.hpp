@@ -56,7 +56,7 @@ inline const std::vector<Entry>& entries() {
         {"Date and Time","date.format","Date Format","Order of year, month and day.",{"DD/MM/YYYY","MM/DD/YYYY","YYYY-MM-DD"}},
         {"Date and Time","time.format","Time Format","Choose a 12-hour or 24-hour clock.",{"24-hour","12-hour"}},
         {"Date and Time","time.seconds","Show Seconds","Show seconds in the clock.",{"Off","On"}},
-        {"Date and Time","time.offset","Time Zone Offset","Hours added to local system time for display.",{"-12","-8","-5","0","1","3","5.5","8","9","12"}},
+        {"Date and Time","time.offset","Time Zone Offset","Hours added to local system time for display.",{"-12","-11","-10","-9","-8","-7","-6","-5","-4","-3","-2","-1","0","1","2","3","4","5","5.5","6","7","8","9","9.5","10","11","12","13"}},
         {"Power Save","power.dim","Idle Dimming","Dim the scene after inactivity.",{"Off","1 minute","5 minutes","10 minutes"}},
         {"Power Save","power.background.fps","Background Frame Limit","Reduce rendering while unfocused.",{"15","30","60"}},
         {"Power Save","power.reduced.motion","Reduced Motion","Reduce background movement and sparkles.",{"Off","On"}},

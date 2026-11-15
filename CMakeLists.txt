@@ -499,6 +499,7 @@ endif()
 set(XMS_SOURCES
   src/app/shell.cpp
   src/app/components/choice_overlay.cpp
+  src/app/components/launch_overlay.cpp
   src/app/components/main_menu.cpp
   src/app/components/message_overlay.cpp
   src/app/components/news_display.cpp
@@ -524,6 +525,7 @@ set(XMS_MODULE_SOURCES
   src/app/shell.cppm
   src/app/component.cppm
   src/app/components/choice_overlay.cppm
+  src/app/components/launch_overlay.cppm
   src/app/components/main_menu.cppm
   src/app/components/message_overlay.cppm
   src/app/components/news_display.cppm

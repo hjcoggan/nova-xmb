@@ -154,10 +154,26 @@ inline std::atomic<int> active_launched_children{0};
     return active_launched_children.load(std::memory_order_relaxed) > 0;
 }
 
+[[nodiscard]] inline std::filesystem::path last_launch_error_path()
+{
+    if(const char* xdg = std::getenv("XDG_STATE_HOME"); xdg && *xdg) {
+        return std::filesystem::path(xdg) / "nova/last-launch-error.json";
+    }
+    if(const char* home = std::getenv("HOME"); home && *home) {
+        return std::filesystem::path(home) / ".local/state/nova/last-launch-error.json";
+    }
+    return {};
+}
+
 inline bool launch_detached(const std::vector<std::string>& args)
 {
     if(args.empty() || args.front().empty()) {
         return false;
+    }
+
+    if(const auto err_path = last_launch_error_path(); !err_path.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(err_path, ec);
     }
 
     std::vector<char*> argv;

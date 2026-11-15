@@ -55,6 +55,7 @@ import vulkan_hpp;
 
 import :component;
 import :choice_overlay;
+import :launch_overlay;
 import :main_menu;
 import :message_overlay;
 import :news_display;
@@ -142,7 +143,15 @@ namespace app
                         renderer.draw_rect({current/fw,y-height/(2*fh)},{width/fw,height/fh},{1,1,1,0.75F});
                         renderer.draw_rect({(current+scale)/fw,y-height/(2*fh)+scale/fh},{(width-2*scale)/fw,(height-2*scale)/fh},{0.08F,0.08F,0.08F,1});
                         renderer.draw_text_pixels(button_labels[i],current+width*0.5F,y*fh+(key_metrics.x-key_metrics.y)*0.5F,key_font,{1,1,1,1},0.7F,0,true);
-                    } else if(auto* icon=buttonTextures[i].get())renderer.draw_image(*icon,current/fw,y-height/(2*fh),height/fh,height/fh);
+                    } else if(auto* icon=buttonTextures[i].get(); icon!=nullptr&&icon->loaded) {
+                        float draw_w=height,draw_h=height;
+                        if(icon->width>0&&icon->height>0) {
+                            const float fit=std::min(height/static_cast<float>(icon->width),height/static_cast<float>(icon->height));
+                            draw_w=static_cast<float>(icon->width)*fit;
+                            draw_h=static_cast<float>(icon->height)*fit;
+                        }
+                        renderer.draw_image(*icon,(current+(width-draw_w)*0.5F)/fw,y-draw_h/(2*fh),draw_w/fh,draw_h/fh);
+                    }
                     renderer.draw_text_pixels(::openxmb::localization::shell_locale::translate(text),current+width+gap,y*fh+(metrics.x-metrics.y)*0.5F,font,{1,1,1,1},0.7F,0,false);
                     current+=width+gap+renderer.text_width_pixels(::openxmb::localization::shell_locale::translate(text),font)+spacing;
                 }
@@ -179,6 +188,18 @@ namespace app
                 return old_overlay &&
                     dynamic_cast<app::choice_overlay*>(old_overlay.get()) != nullptr;
             }
+            bool has_launch_overlay() const {
+                for(const auto& overlay : overlays) {
+                    if(dynamic_cast<app::launch_overlay*>(overlay.get()) != nullptr) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            // Shows "Starting <title>" until the game has a window of its own.
+            void begin_launch(const std::string& title);
+            void end_launch();
+
             bool has_pause_overlay() const {
                 for(const auto& overlay : overlays) {
                     if(dynamic_cast<app::pause_overlay*>(overlay.get()) != nullptr) {
@@ -384,6 +405,8 @@ namespace app
             time_point last_activity=std::chrono::steady_clock::now();
             bool background_only = false;
             bool ingame_mode = false;
+            bool launch_menu_had_focus = false;
+            std::chrono::steady_clock::time_point launch_started{};
 
             bool blur_background = false;
             time_point last_blur_background_change;

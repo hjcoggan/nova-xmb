@@ -136,7 +136,12 @@ std::filesystem::path brightness_state_path() {
     return {};
 }
 
-std::vector<std::string> load_button_guide(const std::string& game_id) {
+struct game_manifest_info {
+    std::string title;
+    std::vector<std::string> guide_lines;
+};
+
+game_manifest_info load_game_manifest(const std::string& game_id) {
     if (game_id.empty() || game_id.find('/') != std::string::npos || game_id.find("..") != std::string::npos) {
         return {};
     }
@@ -150,8 +155,16 @@ std::vector<std::string> load_button_guide(const std::string& game_id) {
         return {};
     }
     const auto parsed = nlohmann::json::parse(in, nullptr, false);
-    if (parsed.is_discarded() || !parsed.is_object() || !parsed.contains("buttonGuide")) {
+    if (parsed.is_discarded() || !parsed.is_object()) {
         return {};
+    }
+
+    game_manifest_info info;
+    if (parsed.contains("title") && parsed["title"].is_string()) {
+        info.title = parsed["title"].get<std::string>();
+    }
+    if (!parsed.contains("buttonGuide")) {
+        return info;
     }
     const auto& guide = parsed["buttonGuide"];
     std::vector<std::string> items;
@@ -175,7 +188,8 @@ std::vector<std::string> load_button_guide(const std::string& game_id) {
         }
     }
     if (items.size() <= 1) {
-        return items;
+        info.guide_lines = std::move(items);
+        return info;
     }
     std::vector<std::string> lines;
     std::string current;
@@ -195,7 +209,8 @@ std::vector<std::string> load_button_guide(const std::string& game_id) {
     if (lines.size() > 2) {
         lines.resize(2);
     }
-    return lines;
+    info.guide_lines = std::move(lines);
+    return info;
 }
 
 void write_brightness_pct(int pct) {
@@ -214,20 +229,10 @@ void write_brightness_pct(int pct) {
     }
     const int max_b = std::max(1, read_int_file(dir / "max_brightness", 100));
     const int raw = std::clamp(static_cast<int>(std::lround(max_b * (pct / 100.0))), 1, max_b);
-    {
-        std::ofstream out(dir / "brightness");
-        if (out) {
-            out << raw << '\n';
-            if (out.good()) {
-                return;
-            }
-        }
+    std::ofstream out(dir / "brightness");
+    if (out) {
+        out << raw << '\n';
     }
-    // The brightness node is root-owned (0644) and the shell runs as the
-    // console user, so a direct write silently fails; use passwordless sudo.
-    const std::string cmd = "printf '%d\\n' " + std::to_string(raw) +
-        " | sudo -n tee " + (dir / "brightness").string() + " >/dev/null 2>&1";
-    (void)std::system(cmd.c_str());
 }
 
 void run_nova_home_ctl(const char* verb, const std::string& game_id) {
@@ -241,8 +246,10 @@ void run_nova_home_ctl(const char* verb, const std::string& game_id) {
 } // namespace
 
 pause_overlay::pause_overlay(std::string game_id)
-    : current_game_id(std::move(game_id)),
-      guide_lines(load_button_guide(current_game_id)) {
+    : current_game_id(std::move(game_id)) {
+    auto manifest = load_game_manifest(current_game_id);
+    current_game_title = std::move(manifest.title);
+    guide_lines = std::move(manifest.guide_lines);
     refresh_levels();
 }
 
@@ -262,14 +269,17 @@ void pause_overlay::render(auroreengine::gui_renderer& renderer, shell* xmb) {
     const float top = c.visible_top();
     const float span_w = c.visible_right() - left;
     const float span_h = c.visible_bottom() - top;
-    c.rect(left, top, span_w, span_h, {0.0f, 0.0f, 0.0f, 0.35f});
-    c.rect(left, 199, span_w, 680, {0.0f, 0.0f, 0.0f, 0.22f});
+    c.rect(left, top, span_w, span_h, {0.0f, 0.0f, 0.0f, 0.75f});
+    c.rect(left, 199, span_w, 680, {0.0f, 0.0f, 0.0f, 0.65f});
     c.rect(left, 199, span_w, 1, {1.0f, 1.0f, 1.0f, 0.75f});
     c.rect(left, 879, span_w, 1, {1.0f, 1.0f, 1.0f, 0.75f});
 
-    const std::string title = current_game_id.empty()
+    const std::string& display_name = current_game_title.empty()
+        ? current_game_id
+        : current_game_title;
+    const std::string title = display_name.empty()
         ? "Game Paused"
-        : ("Game Paused - " + current_game_id);
+        : ("Game Paused - " + display_name);
     c.text(title, 960, 275, 34, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, true);
 
     const std::array<std::string, 4> labels = {

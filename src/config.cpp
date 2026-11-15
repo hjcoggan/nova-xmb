@@ -529,24 +529,58 @@ void config::load_from_json() {
     wavesEnabled = particlesEnabled = true;
     waveParameters.clear();
     std::filesystem::path config_path = config_path_for_read();
-    
-    if (!std::filesystem::exists(config_path)) {
-        spdlog::info("Config file not found at {}, using defaults", config_path.string());
-        return;
+    std::filesystem::path defaults_path("/etc/nova/menu-defaults.json");
+    if (const char* env_defaults = std::getenv("NOVA_MENU_DEFAULTS"); env_defaults && *env_defaults) {
+        defaults_path = env_defaults;
     }
-    
+
     try {
-        std::ifstream config_file(config_path);
-        if (!config_file.is_open()) {
-            spdlog::warn("Failed to open config file: {}", config_path.string());
+        nlohmann::json config = nlohmann::json::object();
+        bool has_config = false;
+        bool user_config_loaded = false;
+        std::error_code ec;
+
+        if (std::filesystem::exists(defaults_path, ec)) {
+            std::ifstream defaults_file(defaults_path);
+            if (defaults_file.is_open()) {
+                auto parsed_defaults = nlohmann::json::parse(defaults_file, nullptr, false);
+                defaults_file.close();
+                if (!parsed_defaults.is_discarded() && parsed_defaults.is_object()) {
+                    config = std::move(parsed_defaults);
+                    has_config = true;
+                } else {
+                    spdlog::warn("Ignoring invalid menu defaults file: {}", defaults_path.string());
+                }
+            }
+        }
+
+        if (std::filesystem::exists(config_path, ec)) {
+            std::ifstream config_file(config_path);
+            if (!config_file.is_open()) {
+                spdlog::warn("Failed to open config file: {}", config_path.string());
+                if (!has_config) {
+                    return;
+                }
+            } else {
+                auto user_config = nlohmann::json::parse(config_file, nullptr, false);
+                // Windows does not allow the migration's atomic replacement while this
+                // stream still holds the original file open.
+                config_file.close();
+                if (!user_config.is_discarded() && user_config.is_object()) {
+                    config.merge_patch(user_config);
+                    has_config = true;
+                    user_config_loaded = true;
+                } else {
+                    spdlog::warn("Ignoring invalid config file: {}", config_path.string());
+                }
+            }
+        }
+
+        if (!has_config) {
+            spdlog::info("Config file not found at {}, using defaults", config_path.string());
             return;
         }
-        
-        nlohmann::json config;
-        config_file >> config;
-        // Windows does not allow the migration's atomic replacement while this
-        // stream still holds the original file open.
-        config_file.close();
+
         bool migrated = false;
         migrate_json(config, migrated);
         
@@ -757,7 +791,7 @@ void config::load_from_json() {
             if(env_flag("OPENXMB_CONFIG_READ_ONLY")) {
                 spdlog::info(
                     "Configuration override is read-only; migration remains in memory for this run");
-            } else {
+            } else if(user_config_loaded) {
                 save_to_json();
             }
         }

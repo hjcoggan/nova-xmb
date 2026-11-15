@@ -225,8 +225,8 @@ inline void nova_write_backlight_pct(int pct,bool persist=true) {
     if(dir.empty()) return;
     const int max_b=std::max(1,nova_read_int(dir/"max_brightness",100));
     const int raw=std::clamp(static_cast<int>(std::lround(max_b*(pct/100.0))),1,max_b);
-    { std::ofstream out(dir/"brightness"); if(out) { out<<raw<<'\n'; if(out.good()) return; } }
-    nova_exec_quiet({"/bin/sh","-c","printf '%d\\n' \"$1\" | sudo -n tee \"$2\" >/dev/null 2>&1","sh",std::to_string(raw),(dir/"brightness").string()});
+    std::ofstream out(dir/"brightness");
+    if(out) out<<raw<<'\n';
 }
 export void restore_saved_brightness() {
     const auto state=nova_brightness_state_path();
@@ -300,11 +300,25 @@ struct NovaWifiNetwork {
     std::string signal;
     bool connected=false;
 };
+inline std::string nova_wifi_device() {
+    std::error_code ec;
+    const std::filesystem::path net_dir("/sys/class/net");
+    if(std::filesystem::is_directory(net_dir,ec)) {
+        for(const auto& entry:std::filesystem::directory_iterator(net_dir,ec)) {
+            const auto& p=entry.path();
+            if(std::filesystem::exists(p/"wireless",ec)||std::filesystem::exists(p/"phy80211",ec)) {
+                return p.filename().string();
+            }
+        }
+    }
+    return "wlan0";
+}
 inline std::vector<NovaWifiNetwork> nova_scan_wifi_networks() {
-    (void)nova_exec_quiet({"iwctl","station","wlan0","scan"});
+    const auto iface=nova_wifi_device();
+    (void)nova_exec_quiet({"iwctl","station",iface,"scan"});
     std::this_thread::sleep_for(std::chrono::milliseconds(450));
     std::string out;
-    if(nova_exec_capture({"iwctl","station","wlan0","get-networks"},out)!=0) return {};
+    if(nova_exec_capture({"iwctl","station",iface,"get-networks"},out)!=0) return {};
     const auto stripped=nova_strip_ansi(out);
     std::vector<NovaWifiNetwork> result;
     std::istringstream in(stripped);
@@ -386,12 +400,14 @@ inline std::vector<NovaBtDevice> nova_scan_bt_devices() {
     return out;
 }
 inline bool nova_wifi_powered() {
-    const auto out=nova_run_read("iwctl device wlan0 show 2>/dev/null");
+    std::string out;
+    (void)nova_exec_capture({"iwctl","device",nova_wifi_device(),"show"},out);
     const auto pos=out.find("Powered");
     return pos!=std::string::npos && out.find("on",pos)!=std::string::npos;
 }
 inline std::string nova_wifi_network() {
-    const auto out=nova_run_read("iwctl station wlan0 show 2>/dev/null");
+    std::string out;
+    (void)nova_exec_capture({"iwctl","station",nova_wifi_device(),"show"},out);
     const auto pos=out.find("Connected network");
     if(pos==std::string::npos) return {};
     auto line=out.substr(pos+std::string("Connected network").size());
@@ -402,12 +418,43 @@ inline std::string nova_wifi_network() {
 inline bool nova_bt_powered() {
     return nova_run_read("bluetoothctl show 2>/dev/null").find("Powered: yes")!=std::string::npos;
 }
+struct NovaProbeCache {
+    std::chrono::steady_clock::time_point last_refresh{};
+    int volume_pct=-1;
+    std::string default_sink;
+    bool wifi_powered=false;
+    std::string wifi_network;
+    bool bt_powered=false;
+    bool valid=false;
+
+    void invalidate() noexcept { valid=false; }
+
+    void ensure_fresh() {
+        const auto now=std::chrono::steady_clock::now();
+        if(valid && (now-last_refresh)<std::chrono::seconds(2)) return;
+        volume_pct=nova_pipewire_volume_pct();
+        default_sink.clear();
+        for(const auto& s:nova_pipewire_sinks()) {
+            if(s.is_default) { default_sink=s.name; break; }
+        }
+        wifi_powered=nova_wifi_powered();
+        wifi_network=nova_wifi_network();
+        bt_powered=nova_bt_powered();
+        last_refresh=now;
+        valid=true;
+    }
+};
+inline NovaProbeCache nova_probe_cache;
 export std::string value(const std::string& key,shell* host=nullptr) {
     const auto& c=config::CONFIG;
     const auto hex=[](const auto& color) {std::string value="#000000";constexpr char digits[]="0123456789abcdef";for(int i=0;i<3;++i){const auto byte=std::clamp(static_cast<int>(color[i]*255+0.5F),0,255);value[1+i*2]=digits[byte>>4];value[2+i*2]=digits[byte&15];}return value;};
     if(key=="theme.icon.color")return c.iconColorAuto?"auto":hex(c.iconColor);
     if(key=="theme.text.color")return hex(c.textColor);
     if(key=="theme.particle.color")return hex(c.particleColor);
+    if(key=="audio.device") {
+        nova_probe_cache.ensure_fresh();
+        if(!nova_probe_cache.default_sink.empty()) return nova_probe_cache.default_sink;
+    }
     if(host&&!host->get_window()->config.headless) {
         if(key=="display.mode") {const auto flags=SDL_GetWindowFlags(host->get_window()->win.get());return (flags&SDL_WINDOW_FULLSCREEN_DESKTOP)==SDL_WINDOW_FULLSCREEN_DESKTOP?"Borderless":(flags&SDL_WINDOW_FULLSCREEN)?"Fullscreen":"Windowed";}
         if(key=="display.monitor")return std::to_string(SDL_GetWindowDisplayIndex(host->get_window()->win.get()));
@@ -442,17 +489,14 @@ export std::string value(const std::string& key,shell* host=nullptr) {
     if(key=="autostart") return c.autostart?"On":"Off";
     if(key=="display.screen.brightness") return std::to_string(nova_backlight_pct());
     if(key=="audio.master") {
-        const int pw=nova_pipewire_volume_pct();
-        if(pw>=0) return std::to_string(pw);
+        nova_probe_cache.ensure_fresh();
+        if(nova_probe_cache.volume_pct>=0) return std::to_string(nova_probe_cache.volume_pct);
     }
-    if(key=="audio.device") {
-        for(const auto& s:nova_pipewire_sinks()) if(s.is_default) return s.name;
-    }
-    if(key=="network.wifi") return nova_wifi_powered()?"On":"Off";
-    if(key=="network.wifi.join") {const auto net=nova_wifi_network();return net.empty()?std::string("Not connected"):net;}
-    if(key=="network.bluetooth") return nova_bt_powered()?"On":"Off";
+    if(key=="network.wifi") { nova_probe_cache.ensure_fresh(); return nova_probe_cache.wifi_powered?"On":"Off"; }
+    if(key=="network.wifi.join") { nova_probe_cache.ensure_fresh(); return nova_probe_cache.wifi_network.empty()?std::string("Not connected"):nova_probe_cache.wifi_network; }
+    if(key=="network.bluetooth") { nova_probe_cache.ensure_fresh(); return nova_probe_cache.bt_powered?"On":"Off"; }
     if(key=="network.bluetooth.devices") return "Scan & Pair";
-    if(key=="network.aeroplane") return (!nova_wifi_powered()&&!nova_bt_powered())?"On":"Off";
+    if(key=="network.aeroplane") { nova_probe_cache.ensure_fresh(); return (!nova_probe_cache.wifi_powered&&!nova_probe_cache.bt_powered)?"On":"Off"; }
     const auto saved=c.preference(key);if(!saved.empty()) return saved;
     if(key=="audio.device") return "System Default";
     if(key=="browser.homepage") return "https://duckduckgo.com";
@@ -642,6 +686,7 @@ class nova_async_task_item final : public progress_item {
         bool completed=false;
 };
 void apply(shell* shell,const std::string& key,const std::string& selected) {
+    nova_probe_cache.invalidate();
     auto& c=config::CONFIG;auto* window=shell->get_window();
     if(key=="theme.icon.color"||key=="theme.text.color"||key=="theme.particle.color") {
         const bool automatic=key=="theme.icon.color"&&(selected=="auto"||selected=="original");
@@ -658,7 +703,7 @@ void apply(shell* shell,const std::string& key,const std::string& selected) {
             return;
         }
     }
-    if(key=="network.wifi") {nova_exec_quiet({"iwctl","device","wlan0","set-property","Powered",selected=="On"?"on":"off"});return;}
+    if(key=="network.wifi") {nova_exec_quiet({"iwctl","device",nova_wifi_device(),"set-property","Powered",selected=="On"?"on":"off"});return;}
     if(key=="network.bluetooth") {nova_exec_quiet({"bluetoothctl","power",selected=="On"?"on":"off"});return;}
     if(key=="network.aeroplane") {nova_exec_quiet({"rfkill",selected=="On"?"block":"unblock","all"});return;}
     if(key=="system.name") SDL_SetWindowTitle(window->win.get(),selected.c_str());
@@ -751,8 +796,10 @@ export void activate(shell* shell,const openxmb::xmb::CatalogNode& node) {
             const auto connect_ssid=[](class shell* host,const std::string& ssid,const std::string& psk) {
                 std::vector<std::string> cmd{"iwctl"};
                 if(!psk.empty()) { cmd.push_back("--passphrase"); cmd.push_back(psk); }
-                cmd.push_back("station"); cmd.push_back("wlan0"); cmd.push_back("connect"); cmd.push_back(ssid);
-                if(nova_exec_quiet(cmd)!=0) show_error(host,"Could not connect to "+ssid+". Check the name and password.");
+                cmd.push_back("station"); cmd.push_back(nova_wifi_device()); cmd.push_back("connect"); cmd.push_back(ssid);
+                const int rc=nova_exec_quiet(cmd);
+                nova_probe_cache.invalidate();
+                if(rc!=0) show_error(host,"Could not connect to "+ssid+". Check the name and password.");
                 else host->reload_menu();
             };
             const auto prompt_manual=[shell,connect_ssid]() {
@@ -843,6 +890,7 @@ export void activate(shell* shell,const openxmb::xmb::CatalogNode& node) {
                         (void)nova_exec_quiet({"bluetoothctl","pair",dev.mac});
                         if(nova_exec_quiet({"bluetoothctl","connect",dev.mac})!=0) show_error(shell,"Could not pair/connect "+dev.name+".");
                     }
+                    nova_probe_cache.invalidate();
                     shell->reload_menu();
                 });
                 act_overlay->set_top_action(dev.name);
@@ -886,6 +934,7 @@ export void activate(shell* shell,const openxmb::xmb::CatalogNode& node) {
                 if(nova_exec_quiet({"wpctl","set-default",sinks[i].id})!=0) {
                     show_error(shell,"Could not switch audio output device.");
                 } else {
+                    nova_probe_cache.invalidate();
                     config::CONFIG.preferences["audio.device"]=sinks[i].name;
                     config::CONFIG.save_config();
                     shell->reload_menu();

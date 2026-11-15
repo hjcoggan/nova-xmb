@@ -108,12 +108,39 @@ find_icon(std::span<const SettingsSceneIcon> icons,
 void draw_icon(auroreengine::gui_renderer &renderer,
                const ContainedLayout &layout, const SettingsRowVisual &row,
                const SettingsSceneIcon &icon, bool glass) {
-  const auto extent = layout.image_extent(row.icon_extent);
-  const auto x = layout.x(row.icon_center_x - row.icon_extent * 0.5);
-  const auto y = layout.y(row.center_y - row.icon_extent * 0.5);
-  if (icon.preserve_color && icon.texture != nullptr) {
-    renderer.draw_image_a(*icon.texture, x, y, extent, extent,
-                          glm::vec4(1.0F, 1.0F, 1.0F, static_cast<float>(row.alpha)));
+  const bool use_glass =
+      !icon.preserve_color && glass &&
+      icon.glass_texture != nullptr && icon.glass_texture->loaded;
+  const auroreengine::texture *target =
+      use_glass ? icon.glass_texture : icon.texture;
+  if (target == nullptr || !target->loaded) {
+    return;
+  }
+
+  double slot_w = row.icon_extent;
+  const double slot_h = row.icon_extent;
+  if (icon.preserve_color && target->width > target->height && target->height > 0) {
+    const double tex_aspect =
+        static_cast<double>(target->width) / static_cast<double>(target->height);
+    slot_w = row.icon_extent * std::clamp(tex_aspect, 1.0, 1.45);
+  }
+  double draw_w = slot_w;
+  double draw_h = slot_h;
+  if (target->width > 0 && target->height > 0) {
+    const double tex_w = static_cast<double>(target->width);
+    const double tex_h = static_cast<double>(target->height);
+    const double fit = std::min(slot_w / tex_w, slot_h / tex_h);
+    draw_w = tex_w * fit;
+    draw_h = tex_h * fit;
+  }
+
+  const auto x = layout.x(row.icon_center_x - draw_w * 0.5);
+  const auto y = layout.y(row.center_y - draw_h * 0.5);
+  const auto w = layout.image_extent(draw_w);
+  const auto h = layout.image_extent(draw_h);
+  if (icon.preserve_color) {
+    renderer.draw_image(*target, x, y, w, h,
+                        glm::vec4(1.0F, 1.0F, 1.0F, static_cast<float>(row.alpha)));
     return;
   }
   const auto glass_alpha = row.focused
@@ -121,11 +148,11 @@ void draw_icon(auroreengine::gui_renderer &renderer,
                                           row.alpha * settings_focused_glass_alpha)
                                : row.alpha * settings_inactive_glass_alpha;
   const auto tint =
-      glm::vec4(utils::xmb_icon_colour(openxmb::xmb::wall_clock_now()), static_cast<float>(glass ? glass_alpha : row.alpha));
-  if (glass && icon.glass_texture != nullptr && icon.glass_texture->loaded)
-    renderer.draw_image_glass(*icon.glass_texture, x, y, extent, extent, tint);
-  else if (icon.texture != nullptr)
-    renderer.draw_image_a(*icon.texture, x, y, extent, extent, tint);
+      glm::vec4(utils::xmb_icon_colour(openxmb::xmb::wall_clock_now()), static_cast<float>(use_glass ? glass_alpha : row.alpha));
+  if (use_glass)
+    renderer.draw_image_glass(*target, x, y, w, h, tint);
+  else
+    renderer.draw_image(*target, x, y, w, h, tint);
 }
 
 void draw_focused_label(auroreengine::gui_renderer &renderer,

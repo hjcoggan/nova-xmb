@@ -29,6 +29,7 @@ export class pause_overlay : public component, public action_receiver {
 
     private:
         std::string current_game_id;
+        std::string current_game_title;
         int selected = 0;
         int volume_pct = 50;
         int brightness_pct = 50;

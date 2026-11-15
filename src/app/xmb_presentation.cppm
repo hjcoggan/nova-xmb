@@ -112,10 +112,11 @@ public:
     }
     void draw(const xmb_canvas& c,std::string_view name,float cx,float cy,float height,float alpha=0.85f,float focus=1) const {
         const auto it=images.find(name);if(it==images.end()||!it->second.image->loaded) return;
-        const auto& t=*it->second.image;
+        const bool use_glass=config::CONFIG.iconGlassRefraction&&it->second.normal&&it->second.normal->loaded;
+        const auto& t=use_glass?*it->second.normal:*it->second.image;
         const float h=height*focus,w=h*t.width/std::max(1,t.height);
-        if(config::CONFIG.iconGlassRefraction&&it->second.normal&&it->second.normal->loaded)
-            c.glass_image(*it->second.normal,cx-w*0.5f,cy-h*0.5f,w,h,{utils::xmb_icon_colour(openxmb::xmb::wall_clock_now()),alpha});
+        if(use_glass)
+            c.glass_image(t,cx-w*0.5f,cy-h*0.5f,w,h,{utils::xmb_icon_colour(openxmb::xmb::wall_clock_now()),alpha});
         else c.image(t,cx-w*0.5f,cy-h*0.5f,w,h,{1,1,1,alpha});
     }
 };

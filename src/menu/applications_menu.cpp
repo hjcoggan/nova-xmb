@@ -283,7 +283,9 @@ std::optional<app_info> parse_game_manifest(const std::filesystem::path& manifes
         app.name = app.id;
     }
     app.runtime = json.value("runtime", std::string("native"));
-    app.comment = json.value("description", app.runtime);
+    if(json.contains("description") && json["description"].is_string()) {
+        app.comment = json["description"].get<std::string>();
+    }
     app.exec = "nova-launch " + app.id;
     app.icon = resolve_manifest_asset(
         game_dir,
@@ -508,6 +510,7 @@ std::unique_ptr<action_menu_entry> create_game_menu_entry(
                     spdlog::warn("Failed to launch game manifest: {} ({})", app.name, app.exec);
                     return result::failure;
                 }
+                if(xmb != nullptr) xmb->begin_launch(app.name);
                 return result::success;
             }
             if(a == action::options && xmb != nullptr) {
@@ -520,6 +523,7 @@ std::unique_ptr<action_menu_entry> create_game_menu_entry(
                             if(args.empty() || !launch_detached(args)) {
                                 return result::failure;
                             }
+                            xmb->begin_launch(app.name);
                             return result::close;
                         }
                         if(index == 1) {

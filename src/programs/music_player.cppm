@@ -269,7 +269,15 @@ public:
       c.rect(1418,967,385,11,{0.48f,0.48f,0.48f,1},5.5f);c.rect(1419,968,383,8,{0.045f,0.045f,0.045f,1},4);
       c.rect(1419,968,383*progress,8,{0.30f,0.49f,0.008f,1},std::min(4.0F,191.5F*progress));c.rect(1419,968,383*progress,2,{0.78f,0.92f,0.35f,1});
     }
-    if(artwork_&&artwork_->loaded) c.image(*artwork_,123,897,88,88);
+    if(artwork_&&artwork_->loaded) {
+      float art_w=88.0F,art_h=88.0F;
+      if(artwork_->width>0&&artwork_->height>0) {
+        const float fit=std::min(88.0F/static_cast<float>(artwork_->width),88.0F/static_cast<float>(artwork_->height));
+        art_w=static_cast<float>(artwork_->width)*fit;
+        art_h=static_cast<float>(artwork_->height)*fit;
+      }
+      c.image(*artwork_,123.0F+(88.0F-art_w)*0.5F,897.0F+(88.0F-art_h)*0.5F,art_w,art_h);
+    }
     else icons_.draw(c,"theme/icon_music_default",167,941,88,0.85f);
     c.text(elide(metadata.title.empty()?std::string("Music"_()):metadata.title,58),243,941,34);
     c.text(elide(metadata.artist+(metadata.album.empty()?"":"  /  "+metadata.album),90),243,981,25);

@@ -28,7 +28,9 @@ module;
 #include <cstdlib>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <ranges>
 #include <optional>
 #include <span>
@@ -275,9 +277,30 @@ namespace app
         openxmb::music::service().shutdown();
     }
 
+    void shell::begin_launch(const std::string& title)
+    {
+        if(has_launch_overlay()) {
+            return;
+        }
+        launch_menu_had_focus = false;
+        launch_started = std::chrono::steady_clock::now();
+        emplace_overlay<app::launch_overlay>(title);
+    }
+
+    void shell::end_launch()
+    {
+        for(unsigned int i = 0; i < overlays.size(); ++i) {
+            if(dynamic_cast<app::launch_overlay*>(overlays[i].get()) != nullptr) {
+                remove_overlay(i);
+                return;
+            }
+        }
+    }
+
     void shell::poll_pause_ipc()
     {
         auto open_pause = [this](const std::string& game_id) {
+            end_launch();
             for (unsigned int i = 0; i < overlays.size(); ++i) {
                 if (dynamic_cast<app::pause_overlay*>(overlays[i].get()) != nullptr) {
                     return;
@@ -2083,9 +2106,22 @@ namespace app
         }
         poll_pause_ipc();
         const bool child_active=menu::has_active_child()&&!has_pause_overlay();
-        const bool focused=!child_active&&(win->config.headless||(SDL_GetWindowFlags(win->win.get())&SDL_WINDOW_INPUT_FOCUS)!=0);
+        const bool has_input_focus=win->config.headless||(SDL_GetWindowFlags(win->win.get())&SDL_WINDOW_INPUT_FOCUS)!=0;
+        const bool focused=!child_active&&has_input_focus;
+        // A launch is over when the game has taken the screen (the menu loses
+        // input focus), when it failed, or when it never came up at all.
+        bool launching=has_launch_overlay();
+        if(launching) {
+            if(has_input_focus) launch_menu_had_focus=true;
+            const auto waited=std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now()-launch_started).count();
+            if(!menu::has_active_child()||(launch_menu_had_focus&&!has_input_focus)||waited>600) {
+                end_launch();
+                launching=false;
+            }
+        }
         const auto cap=config::CONFIG.maxFPS>10000?0:config::CONFIG.maxFPS;
-        win->config.fpsLimit=child_active?1.0:(focused?cap:config::CONFIG.number("power.background.fps",30));
+        win->config.fpsLimit=child_active?(launching?20.0:1.0):(focused?cap:config::CONFIG.number("power.background.fps",30));
         auto& player=openxmb::music::service();
         static bool focus_paused=false;
         if(!focused&&!config::CONFIG.enabled("audio.background")&&player.snapshot().status==openxmb::music::Status::playing) {player.pause();focus_paused=true;}
@@ -2100,8 +2136,42 @@ namespace app
         player.set_output_gain(static_cast<float>(config::CONFIG.number("audio.master",100)*config::CONFIG.number("audio.music",100)/10000.0));
         player.set_background_enabled(config::CONFIG.enabled("music.background"));
         player.tick();
+        if(launching) {
+            // The overlay ignores input and is not an action receiver; there
+            // is nothing else to tick while the game starts.
+            for(unsigned int i=0; i<overlays.size(); i++) {
+                const auto res=overlays[i]->tick(this);
+                if(res & result::close) {remove_overlay(i);i--;}
+            }
+            return;
+        }
         if(background_only || child_active) {
             return;
+        }
+
+        if(!menu::has_active_child()) {
+            if(const auto err_path = menu::last_launch_error_path(); !err_path.empty()) {
+                std::error_code ec;
+                if(std::filesystem::is_regular_file(err_path, ec)) {
+                    std::ifstream in(err_path);
+                    const auto parsed = in ? nlohmann::json::parse(in, nullptr, false) : nlohmann::json{};
+                    std::filesystem::remove(err_path, ec);
+                    if(!parsed.is_discarded() && parsed.is_object()) {
+                        std::string title;
+                        std::string message;
+                        if(parsed.contains("title") && parsed["title"].is_string()) {
+                            title = parsed["title"].get<std::string>();
+                        }
+                        if(parsed.contains("message") && parsed["message"].is_string()) {
+                            message = parsed["message"].get<std::string>();
+                        }
+                        emplace_overlay<app::message_overlay>(
+                            title.empty() ? "Could Not Start Game" : ("Could Not Start " + title),
+                            message.empty() ? "The game exited unexpectedly." : message
+                        );
+                    }
+                }
+            }
         }
 
         if(!pending_panel.empty()) {
