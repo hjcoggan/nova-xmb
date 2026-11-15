@@ -14,8 +14,9 @@
 
 namespace openxmb::xmb {
 
-// fd may be non-blocking. Returns the text before the first newline (or
-// everything sent before the peer closed), without trailing whitespace;
+// fd must be non-blocking so timeout_ms bounds the wait. Returns the text
+// before the first newline (or everything sent before the peer closed),
+// without trailing whitespace;
 // nullopt if nothing arrived in time or the line exceeds limit bytes.
 inline std::optional<std::string> read_ipc_message(int fd, int timeout_ms, std::size_t limit = 256) {
   if (fd < 0 || limit == 0) return std::nullopt;
