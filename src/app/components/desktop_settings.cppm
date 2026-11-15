@@ -120,6 +120,10 @@ inline int nova_exec_capture(const std::vector<std::string>& args,std::string& s
 #else
     stdout_out.clear();
     if(args.empty()) return -1;
+    std::vector<char*> c_args;
+    c_args.reserve(args.size()+1);
+    for(const auto& s:args) c_args.push_back(const_cast<char*>(s.c_str()));
+    c_args.push_back(nullptr);
     int pipefd[2]{-1,-1};
     if(::pipe(pipefd)!=0) return -1;
     const pid_t pid=::fork();
@@ -133,10 +137,6 @@ inline int nova_exec_capture(const std::vector<std::string>& args,std::string& s
         }
         ::dup2(pipefd[1],STDOUT_FILENO);
         if(pipefd[1]!=STDOUT_FILENO) ::close(pipefd[1]);
-        std::vector<char*> c_args;
-        c_args.reserve(args.size()+1);
-        for(const auto& s:args) c_args.push_back(const_cast<char*>(s.c_str()));
-        c_args.push_back(nullptr);
         ::execvp(args.front().c_str(),c_args.data());
         ::_exit(127);
     }
