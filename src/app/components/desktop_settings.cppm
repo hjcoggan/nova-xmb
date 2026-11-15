@@ -619,28 +619,36 @@ class nova_update_item final : public progress_item {
             if(line.empty()) return;
             const auto parsed=nlohmann::json::parse(line,nullptr,false);
             if(parsed.is_discarded() || !parsed.is_object()) return;
-            std::lock_guard<std::mutex> lock(mutex);
-            if(failed || finished) return;
-            const auto event=parsed.value("event",std::string{});
-            const auto detail=parsed.value("detail",std::string{});
-            if(event=="progress") {
-                const int index=parsed.value("index",0);
-                const int total=parsed.value("total",0);
-                if(total>0) step_progress=std::max(0,index-1)/static_cast<double>(total);
-                last_message=total>0?std::format("Step {} of {}: {}",index,total,detail):detail;
-            } else if(event=="note") {
-                if(!detail.empty()) last_message=detail;
-            } else if(event=="error") {
-                last_message=detail.empty()?"System update failed.":detail;
-                failed=true;
-            } else if(event=="done") {
-                if(!parsed.value("ok",true)) {
+            try {
+                std::lock_guard<std::mutex> lock(mutex);
+                if(failed || finished) return;
+                const auto event=parsed.value("event",std::string{});
+                const auto detail=parsed.value("detail",std::string{});
+                if(event=="progress") {
+                    const int index=parsed.value("index",0);
+                    const int total=parsed.value("total",0);
+                    if(total>0) step_progress=std::max(0,index-1)/static_cast<double>(total);
+                    last_message=total>0?std::format("Step {} of {}: {}",index,total,detail):detail;
+                } else if(event=="note") {
+                    if(!detail.empty()) last_message=detail;
+                } else if(event=="error") {
                     last_message=detail.empty()?"System update failed.":detail;
                     failed=true;
-                } else {
-                    step_progress=1.0;
-                    last_message=detail.empty()?"System is up to date.":detail;
-                    finished=true;
+                } else if(event=="done") {
+                    if(!parsed.value("ok",true)) {
+                        last_message=detail.empty()?"System update failed.":detail;
+                        failed=true;
+                    } else {
+                        step_progress=1.0;
+                        last_message=detail.empty()?"System is up to date.":detail;
+                        finished=true;
+                    }
+                }
+            } catch(const nlohmann::json::exception&) {
+                std::lock_guard<std::mutex> lock(mutex);
+                if(!failed && !finished) {
+                    failed=true;
+                    last_message="nova-update emitted an invalid event.";
                 }
             }
         }
