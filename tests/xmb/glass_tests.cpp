@@ -59,7 +59,7 @@ void game_id_validation_matches_the_launcher_rules() {
   using openxmb::xmb::valid_game_id;
   require(valid_game_id("game..edition_2"), "consecutive dots are valid inside a game ID");
   require(valid_game_id("Game-1"), "letters, digits and hyphens are valid");
-  require(!valid_game_id("../escape"), "path separators are rejected");
+  require(!valid_game_id("game/escape"), "path separators are rejected");
   require(!valid_game_id(".hidden"), "game IDs start with a letter or digit");
   require(!valid_game_id("bad name"), "whitespace is rejected");
 }
