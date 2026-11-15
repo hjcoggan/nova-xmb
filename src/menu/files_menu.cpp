@@ -24,6 +24,7 @@ module;
 #include <chrono>
 #include <cctype>
 #include <ctime>
+#include <exception>
 #include <filesystem>
 #include <functional>
 #include <iomanip>
@@ -858,9 +859,15 @@ namespace menu {
         auto open_infos = programs::get_open_infos(file_path, programs::file_info(file_path));
         if (!open_infos.empty()) {
             auto& open_info = open_infos[0];
-            auto component = open_info.create(file_path, loader);
-            if (component) {
-                xmb->push_overlay(std::move(component));
+            try {
+                auto component = open_info.create(file_path, loader);
+                if (component) {
+                    xmb->push_overlay(std::move(component));
+                    return result::success;
+                }
+            } catch (const std::exception& error) {
+                spdlog::error("Could not open file {}: {}", file_path.string(), error.what());
+                xmb->emplace_overlay<app::message_overlay>("Cannot Open File", error.what());
                 return result::success;
             }
         }

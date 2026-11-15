@@ -24,10 +24,12 @@ module;
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -39,6 +41,13 @@ module;
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#endif
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
 #endif
 
 export module openxmb.app:text_viewer;
@@ -55,6 +64,8 @@ namespace programs {
 
 using namespace app;
 
+constexpr std::size_t max_text_file_size = 64U * 1024U * 1024U;
+
 #if __linux__
 class mapped_memory {
     public:
@@ -64,12 +75,19 @@ class mapped_memory {
                 spdlog::error("Failed to open file {}: {}", path.string(), strerror(errno));
                 throw std::runtime_error("Failed to open file");
             }
-            m_size = lseek(m_fd, 0, SEEK_END);
-            if(m_size < 0) {
+            const off_t size = lseek(m_fd, 0, SEEK_END);
+            if(size < 0) {
                 spdlog::error("Failed to get size of file {}: {}", path.string(), strerror(errno));
                 close(m_fd);
+                m_fd = -1;
                 throw std::runtime_error("Failed to get file size");
             }
+            if(static_cast<std::uint64_t>(size) > max_text_file_size) {
+                close(m_fd);
+                m_fd = -1;
+                throw std::runtime_error("Text file exceeds the 64 MiB viewer limit");
+            }
+            m_size = static_cast<std::size_t>(size);
             if(m_size == 0) { m_data = nullptr; return; }
             m_data = mmap(nullptr, m_size, PROT_READ, MAP_PRIVATE, m_fd, 0);
             if(m_data == MAP_FAILED) {
@@ -81,18 +99,12 @@ class mapped_memory {
         mapped_memory(const mapped_memory&) = delete;
         mapped_memory(mapped_memory&& other) noexcept :
             m_fd(std::exchange(other.m_fd, -1)), m_size(std::exchange(other.m_size, 0)), m_data(std::exchange(other.m_data, nullptr)) {}
-        ~mapped_memory() {
-            if(m_data != nullptr) {
-                munmap(m_data, m_size);
-            }
-            if(m_fd >= 0) {
-                close(m_fd);
-            }
-        }
+        ~mapped_memory() { release(); }
 
         mapped_memory& operator=(const mapped_memory&) = delete;
         mapped_memory& operator=(mapped_memory&& other) noexcept {
             if(this != &other) {
+                release();
                 m_fd = std::exchange(other.m_fd, -1);
                 m_size = std::exchange(other.m_size, 0);
                 m_data = std::exchange(other.m_data, nullptr);
@@ -114,6 +126,18 @@ class mapped_memory {
             return std::span<const T>(static_cast<const T*>(m_data), m_size / sizeof(T));
         }
     private:
+        void release() noexcept {
+            if(m_data != nullptr) {
+                munmap(m_data, m_size);
+                m_data = nullptr;
+            }
+            if(m_fd >= 0) {
+                close(m_fd);
+                m_fd = -1;
+            }
+            m_size = 0;
+        }
+
         int m_fd = -1;
         std::size_t m_size = 0;
         void* m_data = nullptr;
@@ -131,6 +155,9 @@ class mapped_memory {
             if(size < 0) {
                 spdlog::error("Failed to get size of file {}: {}", path.string(), strerror(errno));
                 throw std::runtime_error("Failed to get file size");
+            }
+            if(static_cast<std::uint64_t>(size) > max_text_file_size) {
+                throw std::runtime_error("Text file exceeds the 64 MiB viewer limit");
             }
             file.seekg(0, std::ios::beg);
 
@@ -202,7 +229,29 @@ namespace {
 #if defined(__APPLE__)
         std::string command = "open " + shell_quote(uri);
 #elif defined(_WIN32)
-        std::string command = "start \"\" \"" + std::string(uri) + "\"";
+        if(uri.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+            spdlog::warn("URI is too long to open");
+            return;
+        }
+        const int input_size = static_cast<int>(uri.size());
+        const int wide_size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+            uri.data(), input_size, nullptr, 0);
+        if(wide_size <= 0) {
+            spdlog::warn("Could not convert URI to UTF-16");
+            return;
+        }
+        std::wstring wide_uri(static_cast<std::size_t>(wide_size), L'\\0');
+        if(MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, uri.data(), input_size,
+            wide_uri.data(), wide_size) != wide_size) {
+            spdlog::warn("Could not convert URI to UTF-16");
+            return;
+        }
+        const auto result = reinterpret_cast<std::intptr_t>(
+            ShellExecuteW(nullptr, L"open", wide_uri.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+        if(result <= 32) {
+            spdlog::warn("Failed to open URI: {}", uri);
+        }
+        return;
 #else
         std::string command = "xdg-open " + shell_quote(uri) + " >/dev/null 2>&1 &";
 #endif
