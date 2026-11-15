@@ -25,6 +25,7 @@ module;
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <type_traits>
 #include <limits>
 #include <chrono>
@@ -41,6 +42,7 @@ module;
 
 #if __linux__
 #include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 module openxmb.app;
@@ -73,6 +75,10 @@ namespace menu {
                 start_time = std::chrono::system_clock::now();
 
                 int pid = fork();
+                if(pid < 0) {
+                    message = "Failed to update."_();
+                    return status::error;
+                }
                 if(pid == 0) {
                     std::filesystem::path appimageupdatetool = config::CONFIG.exe_directory / "appimageupdatetool";
                     execl(appimageupdatetool.c_str(), "appimageupdatetool", "--overwrite", std::getenv("APPIMAGE"), nullptr);
@@ -92,18 +98,17 @@ namespace menu {
                     return status::running;
                 }
 
-                int status{};
-                if(waitpid(pid, &status, WNOHANG) != 0) {
-                    int exit_code = WEXITSTATUS(status);
-                    if(exit_code == 0) {
-                        message = "Update successful. Please restart the application to apply it."_();
-                        return status::success;
-                    } else {
-                        message = "Failed to update."_();
-                        return status::error;
-                    }
+                int wait_status{};
+                const pid_t waited = waitpid(pid, &wait_status, WNOHANG);
+                if(waited == 0 || (waited < 0 && errno == EINTR)) {
+                    return status::running;
                 }
-                return status::running;
+                if(waited != pid || !WIFEXITED(wait_status) || WEXITSTATUS(wait_status) != 0) {
+                    message = "Failed to update."_();
+                    return status::error;
+                }
+                message = "Update successful. Please restart the application to apply it."_();
+                return status::success;
             }
 
             bool cancel(std::string& message) override {
@@ -124,6 +129,10 @@ namespace menu {
                 start_time = std::chrono::system_clock::now();
 
                 int pid = fork();
+                if(pid < 0) {
+                    message = "Failed to check for updates."_();
+                    return status::error;
+                }
                 if(pid == 0) {
                     std::filesystem::path appimageupdatetool = config::CONFIG.exe_directory / "appimageupdatetool";
                     execl(appimageupdatetool.c_str(), "appimageupdatetool", "--check-for-update", std::getenv("APPIMAGE"), nullptr);
@@ -140,28 +149,33 @@ namespace menu {
                     return status::running;
                 }
 
-                int status{};
-                if(waitpid(pid, &status, WNOHANG) != 0) {
-                    int exit_code = WEXITSTATUS(status);
-                    if(exit_code == 0) {
-                        message = "No updates available."_();
-                        return status::success;
-                    } else if(exit_code == 1) { // This also gets triggered if the update tool is not found or the update check fails. Oh well...
-                        message = {};
-                        xmb->emplace_overlay<app::message_overlay>("Update Available"_(), "An update is available. Would you like to install it?"_(),
-                            std::vector<std::string>{"Yes"_(), "No"_()}, [xmb = this->xmb](unsigned int choice){
-                                if(choice == 0) {
-                                    xmb->emplace_overlay<app::progress_overlay>("Updating"_(), std::make_unique<updater>());
-                                }
-                            }
-                        );
-                        return status::success;
-                    } else {
-                        message = "Failed to check for updates."_();
-                        return status::error;
-                    }
+                int wait_status{};
+                const pid_t waited = waitpid(pid, &wait_status, WNOHANG);
+                if(waited == 0 || (waited < 0 && errno == EINTR)) {
+                    return status::running;
                 }
-                return status::running;
+                if(waited != pid || !WIFEXITED(wait_status)) {
+                    message = "Failed to check for updates."_();
+                    return status::error;
+                }
+                const int exit_code = WEXITSTATUS(wait_status);
+                if(exit_code == 0) {
+                    message = "No updates available."_();
+                    return status::success;
+                } else if(exit_code == 1) { // This also gets triggered if the update tool is not found or the update check fails. Oh well...
+                    message = {};
+                    xmb->emplace_overlay<app::message_overlay>("Update Available"_(), "An update is available. Would you like to install it?"_(),
+                        std::vector<std::string>{"Yes"_(), "No"_()}, [xmb = this->xmb](unsigned int choice){
+                            if(choice == 0) {
+                                xmb->emplace_overlay<app::progress_overlay>("Updating"_(), std::make_unique<updater>());
+                            }
+                        }
+                    );
+                    return status::success;
+                } else {
+                    message = "Failed to check for updates."_();
+                    return status::error;
+                }
             }
             bool cancel(std::string& message) override {
                 return false;
