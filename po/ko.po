@@ -5071,3 +5071,36 @@ msgstr "가져오기 폴더"
 
 msgid "Preset:"
 msgstr "사전 설정:"
+
+msgid "Set the date, clock and time zone."
+msgstr "날짜, 시계 및 시간대를 설정합니다."
+
+msgid "Adjust the screen and menu display."
+msgstr "화면과 메뉴 표시를 조정합니다."
+
+msgid "Manage wireless connections."
+msgstr "무선 연결을 관리합니다."
+
+msgid "Reduce power use when idle."
+msgstr "대기 중 전력 사용량을 줄입니다."
+
+msgid "Adjust sound and volume."
+msgstr "사운드와 음량을 조정합니다."
+
+msgid "Change system settings."
+msgstr "시스템 설정을 변경합니다."
+
+msgid "Update the system software."
+msgstr "시스템 소프트웨어를 업데이트합니다."
+
+msgid "Choose the menu background."
+msgstr "메뉴 배경을 선택합니다."
+
+msgid "Choose the menu colour."
+msgstr "메뉴 색상을 선택합니다."
+
+msgid "Set menu lighting by time of day."
+msgstr "시간대에 따라 메뉴 조명을 설정합니다."
+
+msgid "Change the menu appearance."
+msgstr "메뉴 모양을 변경합니다."

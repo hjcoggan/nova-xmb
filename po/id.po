@@ -5071,3 +5071,36 @@ msgstr "Kotak impor"
 
 msgid "Preset:"
 msgstr "Prasetel:"
+
+msgid "Set the date, clock and time zone."
+msgstr "Atur tanggal, jam, dan zona waktu."
+
+msgid "Adjust the screen and menu display."
+msgstr "Sesuaikan tampilan layar dan menu."
+
+msgid "Manage wireless connections."
+msgstr "Kelola koneksi nirkabel."
+
+msgid "Reduce power use when idle."
+msgstr "Kurangi penggunaan daya saat tidak digunakan."
+
+msgid "Adjust sound and volume."
+msgstr "Sesuaikan suara dan volume."
+
+msgid "Change system settings."
+msgstr "Ubah pengaturan sistem."
+
+msgid "Update the system software."
+msgstr "Perbarui perangkat lunak sistem."
+
+msgid "Choose the menu background."
+msgstr "Pilih latar belakang menu."
+
+msgid "Choose the menu colour."
+msgstr "Pilih warna menu."
+
+msgid "Set menu lighting by time of day."
+msgstr "Atur pencahayaan menu berdasarkan waktu."
+
+msgid "Change the menu appearance."
+msgstr "Ubah tampilan menu."

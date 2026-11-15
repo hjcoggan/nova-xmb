@@ -5071,3 +5071,36 @@ msgstr "待匯入項目"
 
 msgid "Preset:"
 msgstr "預設："
+
+msgid "Set the date, clock and time zone."
+msgstr "設定日期、時間和時區。"
+
+msgid "Adjust the screen and menu display."
+msgstr "調整螢幕和選單顯示。"
+
+msgid "Manage wireless connections."
+msgstr "管理無線連線。"
+
+msgid "Reduce power use when idle."
+msgstr "減少閒置時的耗電量。"
+
+msgid "Adjust sound and volume."
+msgstr "調整音效和音量。"
+
+msgid "Change system settings."
+msgstr "變更系統設定。"
+
+msgid "Update the system software."
+msgstr "更新系統軟體。"
+
+msgid "Choose the menu background."
+msgstr "選擇選單背景。"
+
+msgid "Choose the menu colour."
+msgstr "選擇選單色彩。"
+
+msgid "Set menu lighting by time of day."
+msgstr "依照一天中的時間設定選單照明。"
+
+msgid "Change the menu appearance."
+msgstr "變更選單外觀。"
