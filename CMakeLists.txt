@@ -765,6 +765,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
     COMMAND "${CMAKE_COMMAND}"
       -DOPENXMB_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckSourceInvariants.cmake)
+  set_tests_properties(openxmb_source_invariants PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_layout_timeline_tests
     tests/xmb/layout_timeline_tests.cpp
@@ -778,12 +779,14 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   openxmb_configure_native_test(openxmb_layout_timeline_tests)
   add_test(NAME openxmb_layout_timeline_tests
     COMMAND openxmb_layout_timeline_tests)
+  set_tests_properties(openxmb_layout_timeline_tests PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_procedural_wave_tests tests/xmb/procedural_wave_tests.cpp)
   target_link_libraries(openxmb_procedural_wave_tests PRIVATE OpenXMB::ShellCore)
   set_target_properties(openxmb_procedural_wave_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
   openxmb_configure_native_test(openxmb_procedural_wave_tests)
   add_test(NAME openxmb_procedural_wave_tests COMMAND openxmb_procedural_wave_tests)
+  set_tests_properties(openxmb_procedural_wave_tests PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_wave_data_tests
     tests/xmb/wave_data_tests.cpp
@@ -792,8 +795,10 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   set_target_properties(openxmb_wave_data_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
   openxmb_configure_native_test(openxmb_wave_data_tests)
   add_test(NAME openxmb_wave_data_tests COMMAND openxmb_wave_data_tests)
+  set_tests_properties(openxmb_wave_data_tests PROPERTIES TIMEOUT 120)
   if(OPENXMB_IMPORT_XMB_WEB_COMPAT)
     add_test(NAME openxmb_wave_reference_tests COMMAND openxmb_wave_data_tests "${CMAKE_CURRENT_SOURCE_DIR}/../xmb-web")
+    set_tests_properties(openxmb_wave_reference_tests PROPERTIES TIMEOUT 120)
   endif()
 
   add_executable(openxmb_identity_tests
@@ -804,6 +809,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   add_test(NAME openxmb_identity_tests
     COMMAND openxmb_identity_tests
       "${CMAKE_CURRENT_SOURCE_DIR}")
+  set_tests_properties(openxmb_identity_tests PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_background_tests
     tests/xmb/background_tests.cpp
@@ -813,6 +819,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   openxmb_configure_native_test(openxmb_background_tests)
   add_test(NAME openxmb_background_tests
     COMMAND openxmb_background_tests)
+  set_tests_properties(openxmb_background_tests PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_status_bar_tests
     tests/xmb/status_bar_tests.cpp
@@ -822,6 +829,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   openxmb_configure_native_test(openxmb_status_bar_tests)
   add_test(NAME openxmb_status_bar_tests
     COMMAND openxmb_status_bar_tests)
+  set_tests_properties(openxmb_status_bar_tests PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_glass_tests
     tests/xmb/glass_tests.cpp
@@ -830,6 +838,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   openxmb_configure_native_test(openxmb_glass_tests)
   add_test(NAME openxmb_glass_tests
     COMMAND openxmb_glass_tests)
+  set_tests_properties(openxmb_glass_tests PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_live_crossbar_contract_tests
     tests/xmb/live_crossbar_contract_tests.cpp
@@ -843,6 +852,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   openxmb_configure_native_test(openxmb_live_crossbar_contract_tests)
   add_test(NAME openxmb_live_crossbar_contract_tests
     COMMAND openxmb_live_crossbar_contract_tests)
+  set_tests_properties(openxmb_live_crossbar_contract_tests PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_media_foundation_tests
     tests/media/media_foundation_tests.cpp
@@ -852,6 +862,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   openxmb_configure_native_test(openxmb_media_foundation_tests)
   add_test(NAME openxmb_media_foundation_tests
     COMMAND openxmb_media_foundation_tests)
+  set_tests_properties(openxmb_media_foundation_tests PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_catalog_state_tests
     tests/xmb/catalog_state_tests.cpp
@@ -861,6 +872,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   openxmb_configure_native_test(openxmb_catalog_state_tests)
   add_test(NAME openxmb_catalog_state_tests
     COMMAND openxmb_catalog_state_tests)
+  set_tests_properties(openxmb_catalog_state_tests PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_settings_domain_tests
     tests/settings/settings_domain_tests.cpp
@@ -870,6 +882,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   openxmb_configure_native_test(openxmb_settings_domain_tests)
   add_test(NAME openxmb_settings_domain_tests
     COMMAND openxmb_settings_domain_tests)
+  set_tests_properties(openxmb_settings_domain_tests PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_dialog_wizard_state_tests
     tests/dialogs/dialog_wizard_state_tests.cpp
@@ -879,6 +892,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   openxmb_configure_native_test(openxmb_dialog_wizard_state_tests)
   add_test(NAME openxmb_dialog_wizard_state_tests
     COMMAND openxmb_dialog_wizard_state_tests)
+  set_tests_properties(openxmb_dialog_wizard_state_tests PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_settings_scene_tests
     tests/xmb/settings_scene_tests.cpp
@@ -888,6 +902,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   openxmb_configure_native_test(openxmb_settings_scene_tests)
   add_test(NAME openxmb_settings_scene_tests
     COMMAND openxmb_settings_scene_tests)
+  set_tests_properties(openxmb_settings_scene_tests PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_settings_actions_tests
     tests/xmb/settings_actions_tests.cpp
@@ -897,6 +912,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   openxmb_configure_native_test(openxmb_settings_actions_tests)
   add_test(NAME openxmb_settings_actions_tests
     COMMAND openxmb_settings_actions_tests)
+  set_tests_properties(openxmb_settings_actions_tests PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_settings_controller_tests
     tests/xmb/settings_controller_tests.cpp
@@ -906,6 +922,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   openxmb_configure_native_test(openxmb_settings_controller_tests)
   add_test(NAME openxmb_settings_controller_tests
     COMMAND openxmb_settings_controller_tests)
+  set_tests_properties(openxmb_settings_controller_tests PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_localization_core_tests
     tests/localization/localization_core_tests.cpp
@@ -915,6 +932,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   openxmb_configure_native_test(openxmb_localization_core_tests)
   add_test(NAME openxmb_localization_core_tests
     COMMAND openxmb_localization_core_tests)
+  set_tests_properties(openxmb_localization_core_tests PROPERTIES TIMEOUT 120)
 
   add_executable(openxmb_icon_resolver_tests
     tests/xmb/icon_resolver_tests.cpp
@@ -925,10 +943,12 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   openxmb_configure_native_test(openxmb_icon_resolver_tests)
   add_test(NAME openxmb_icon_resolver_tests
     COMMAND openxmb_icon_resolver_tests)
+  set_tests_properties(openxmb_icon_resolver_tests PROPERTIES TIMEOUT 120)
   if(OPENXMB_IMPORT_XMB_WEB_COMPAT)
     add_test(NAME openxmb_compat_icon_materials
       COMMAND openxmb_icon_resolver_tests
         "${CMAKE_BINARY_DIR}/shell/compat/xmb-ui-compat")
+    set_tests_properties(openxmb_compat_icon_materials PROPERTIES TIMEOUT 120)
   endif()
 
   add_executable(openxmb_visual_harness_tests
@@ -939,6 +959,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   add_test(NAME openxmb_visual_harness_tests
     COMMAND openxmb_visual_harness_tests
       "${CMAKE_CURRENT_SOURCE_DIR}")
+  set_tests_properties(openxmb_visual_harness_tests PROPERTIES TIMEOUT 120)
 
   find_package(Python3 COMPONENTS Interpreter)
   if(Python3_FOUND)
@@ -952,6 +973,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
         --thresholds
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/xmb/manifests/visual-thresholds.json")
     set_tests_properties(openxmb_verify_reference_frames PROPERTIES
+      TIMEOUT 120
       LABELS "visual-regression")
     if(NOT EXISTS "${_openxmb_reference_root}")
       set_tests_properties(openxmb_verify_reference_frames PROPERTIES DISABLED TRUE)
@@ -977,9 +999,10 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
               --scene root)
           set_tests_properties(openxmb_visual_regression PROPERTIES
             DISABLED TRUE
+            TIMEOUT 120
             LABELS "visual-regression")
         endif()
-        set_tests_properties(openxmb_visual_regression PROPERTIES LABELS "visual-regression")
+        set_tests_properties(openxmb_visual_regression PROPERTIES TIMEOUT 120 LABELS "visual-regression")
       endif()
     endif()
   endif()
@@ -1423,12 +1446,14 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   set_target_properties(openxmb_desktop_settings_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
   openxmb_configure_native_test(openxmb_desktop_settings_tests)
   add_test(NAME openxmb_desktop_settings_tests COMMAND openxmb_desktop_settings_tests "${CMAKE_CURRENT_SOURCE_DIR}/assets/xmb/catalog/en.json")
+  set_tests_properties(openxmb_desktop_settings_tests PROPERTIES TIMEOUT 120)
 endif()
 
 if(OPENXMB_BUILD_NATIVE_TESTS)
   add_executable(openxmb_input_bindings_tests tests/xmb/input_bindings_tests.cpp)
   set_target_properties(openxmb_input_bindings_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
   add_test(NAME openxmb_input_bindings_tests COMMAND openxmb_input_bindings_tests)
+  set_tests_properties(openxmb_input_bindings_tests PROPERTIES TIMEOUT 120)
 endif()
 
 if(OPENXMB_BUILD_NATIVE_TESTS AND ENABLE_VIDEO_PLAYER)
@@ -1436,6 +1461,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS AND ENABLE_VIDEO_PLAYER)
   target_include_directories(openxmb_video_texture_tests PRIVATE include)
   set_target_properties(openxmb_video_texture_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
   add_test(NAME openxmb_video_texture_tests COMMAND openxmb_video_texture_tests)
+  set_tests_properties(openxmb_video_texture_tests PROPERTIES TIMEOUT 120)
   option(OPENXMB_BUILD_GPU_TESTS "Build real Vulkan video upload validation" OFF)
   if(OPENXMB_BUILD_GPU_TESTS)
     add_executable(openxmb_video_texture_gpu_tests tests/video/video_texture_gpu_tests.cpp)
@@ -1443,6 +1469,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS AND ENABLE_VIDEO_PLAYER)
     target_link_libraries(openxmb_video_texture_gpu_tests PRIVATE Vulkan::Vulkan)
     set_target_properties(openxmb_video_texture_gpu_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
     add_test(NAME openxmb_video_texture_gpu COMMAND openxmb_video_texture_gpu_tests "${CMAKE_CURRENT_BINARY_DIR}/shaders/yuv420p_decode.comp.spv")
+    set_tests_properties(openxmb_video_texture_gpu PROPERTIES TIMEOUT 120)
   endif()
 endif()
 
@@ -1450,12 +1477,14 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   add_executable(openxmb_input_timing_tests tests/xmb/input_timing_tests.cpp)
   set_target_properties(openxmb_input_timing_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
   add_test(NAME openxmb_input_timing_tests COMMAND openxmb_input_timing_tests)
+  set_tests_properties(openxmb_input_timing_tests PROPERTIES TIMEOUT 120)
 endif()
 
 if(OPENXMB_BUILD_NATIVE_TESTS)
   add_executable(openxmb_dialog_input_layout_tests tests/dialogs/ui_input_layout_tests.cpp)
   set_target_properties(openxmb_dialog_input_layout_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
   add_test(NAME openxmb_dialog_input_layout_tests COMMAND openxmb_dialog_input_layout_tests)
+  set_tests_properties(openxmb_dialog_input_layout_tests PROPERTIES TIMEOUT 120)
 endif()
 
 if(OPENXMB_BUILD_NATIVE_TESTS AND ENABLE_VIDEO_PLAYER)
@@ -1486,6 +1515,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
     add_executable(openxmb_${music_polish}_tests tests/xmb/${music_polish}_tests.cpp)
     set_target_properties(openxmb_${music_polish}_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
     add_test(NAME openxmb_${music_polish}_tests COMMAND openxmb_${music_polish}_tests)
+    set_tests_properties(openxmb_${music_polish}_tests PROPERTIES TIMEOUT 120)
   endforeach()
   add_executable(openxmb_language_switch_tests tests/localization/language_switch_tests.cpp)
   target_link_libraries(openxmb_language_switch_tests PRIVATE OpenXMB::CatalogCore Intl::Intl)
@@ -1496,6 +1526,7 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set_tests_properties(openxmb_language_switch_tests PROPERTIES ENVIRONMENT "LC_ALL=C.UTF-8")
   endif()
+  set_tests_properties(openxmb_language_switch_tests PROPERTIES TIMEOUT 120)
   add_executable(openxmb_language_font_tests tests/localization/font_selection_tests.cpp src/localization/font_selection.cpp)
   target_link_libraries(openxmb_language_font_tests PRIVATE Freetype::Freetype Intl::Intl)
   set_target_properties(openxmb_language_font_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
@@ -1506,4 +1537,5 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
     set(_openxmb_font_test_assets "${CMAKE_CURRENT_BINARY_DIR}/share/shell")
   endif()
   add_test(NAME openxmb_language_font_tests COMMAND openxmb_language_font_tests "${_openxmb_font_test_assets}" "${CMAKE_CURRENT_BINARY_DIR}/locales")
+  set_tests_properties(openxmb_language_font_tests PROPERTIES TIMEOUT 120)
 endif()
