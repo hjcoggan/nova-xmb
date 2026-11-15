@@ -1,4 +1,5 @@
 #include "openxmb/xmb/glass.hpp"
+#include "openxmb/xmb/game_id.hpp"
 #include "openxmb/xmb/pause_backdrop.hpp"
 #include "openxmb/xmb/child_process.hpp"
 #include "openxmb/xmb/ipc_message.hpp"
@@ -53,6 +54,15 @@ void variants_differ_only_where_the_spec_says() {
   require(glass::material_for(glass::variant::clear).blur_lod <
               glass::material_for(glass::variant::regular).blur_lod,
           "clear glass blurs less than regular glass");
+}
+
+void game_id_validation_matches_the_launcher_rules() {
+  using openxmb::xmb::valid_game_id;
+  require(valid_game_id("game..edition_2"), "consecutive dots are valid inside a game ID");
+  require(valid_game_id("Game-1"), "letters, digits and hyphens are valid");
+  require(!valid_game_id("game/escape"), "path separators are rejected");
+  require(!valid_game_id(".hidden"), "game IDs start with a letter or digit");
+  require(!valid_game_id("bad name"), "whitespace is rejected");
 }
 
 void shapes_stay_concentric_and_never_invert() {
@@ -344,6 +354,7 @@ void engine_shader_implements_the_panel_mode() {
 int main() {
   engine_shader_implements_the_panel_mode();
   variants_differ_only_where_the_spec_says();
+  game_id_validation_matches_the_launcher_rules();
   shapes_stay_concentric_and_never_invert();
   contrast_threshold_is_pinned();
   dimming_keeps_white_text_legible();

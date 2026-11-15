@@ -2,6 +2,7 @@
 
 module;
 #include "openxmb/xmb/glass.hpp"
+#include "openxmb/xmb/game_id.hpp"
 
 #include <algorithm>
 #include <array>
@@ -143,7 +144,7 @@ struct game_manifest_info {
 };
 
 game_manifest_info load_game_manifest(const std::string& game_id) {
-    if (game_id.empty() || game_id.find('/') != std::string::npos || game_id.find("..") != std::string::npos) {
+    if (!openxmb::xmb::valid_game_id(game_id)) {
         return {};
     }
     const char* home = std::getenv("HOME");
