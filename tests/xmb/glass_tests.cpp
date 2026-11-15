@@ -6,7 +6,9 @@
 #include "openxmb/xmb/iwctl_status.hpp"
 #include <fcntl.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <chrono>
+#include <csignal>
 #include <thread>
 #include "openxmb/xmb/settings_scene.hpp"
 #include "openxmb/xmb/status_bar.hpp"
@@ -221,6 +223,41 @@ void a_finished_child_reports_its_exit() {
           "a missing program does not start");
 }
 
+// A signal arriving during waitpid() reports EINTR, not a finished child.
+// Polling several live children under a steady alarm load must keep seeing
+// nullopt (still running); without the retry, an EINTR reports the child
+// finished with failure and drops it.
+void signals_do_not_reap_a_running_child() {
+  struct sigaction wake = {};
+  wake.sa_handler = [](int) {};
+  sigemptyset(&wake.sa_mask);
+  require(sigaction(SIGALRM, &wake, nullptr) == 0, "alarm handler installs");
+  itimerval tick = {};
+  tick.it_interval = {0, 2000};
+  tick.it_value = {0, 2000};
+  require(setitimer(ITIMER_REAL, &tick, nullptr) == 0, "alarm timer starts");
+  openxmb::xmb::child_process live[8];
+  for (auto &child : live) require(child.spawn({"sh", "-c", "sleep 30"}), "children start");
+  int polls = 0;
+  for (int i = 0; i < 2000; ++i) {
+    bool any_running = false;
+    for (auto &child : live) {
+      if (!child.running()) continue;
+      any_running = true;
+      require(!child.poll().has_value(), "EINTR never reports a finished child");
+      ++polls;
+    }
+    if (!any_running) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  require(polls > 100, "poll ran under signal load");
+  for (auto &child : live) require(child.running(), "every child is still running");
+  tick.it_interval = {0, 0};
+  tick.it_value = {0, 0};
+  require(setitimer(ITIMER_REAL, &tick, nullptr) == 0, "alarm timer stops");
+  require(signal(SIGALRM, SIG_DFL) != SIG_ERR, "default disposition returns");
+}
+
 // The pause socket wakes the menu on connect, before the daemon has written
 // its line; the reader must wait for it instead of dropping the message.
 void a_message_written_after_connect_is_not_lost() {
@@ -366,6 +403,7 @@ int main() {
   square_icon_columns_have_no_gap();
   cancelling_a_capture_does_not_block();
   a_finished_child_reports_its_exit();
+  signals_do_not_reap_a_running_child();
   a_message_written_after_connect_is_not_lost();
   an_empty_connection_reads_nothing();
   fatal_fd_errors_do_not_spin_timeout();

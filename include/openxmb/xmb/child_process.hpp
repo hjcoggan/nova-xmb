@@ -6,6 +6,7 @@
 // terminated children on later frames, killing any that outlive a grace
 // period.
 
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <optional>
@@ -42,10 +43,14 @@ class child_process {
   [[nodiscard]] bool running() const noexcept { return pid_ > 0; }
 
   // nullopt while it runs; then whether it exited with status 0.
+  // A signal during waitpid() reports EINTR, not a finished child.
   std::optional<bool> poll() {
     if (pid_ > 0) {
       int status = 0;
-      const pid_t done = waitpid(pid_, &status, WNOHANG);
+      pid_t done = -1;
+      do {
+        done = waitpid(pid_, &status, WNOHANG);
+      } while (done < 0 && errno == EINTR);
       if (done == pid_ || done < 0) {
         result_ = done == pid_ && WIFEXITED(status) && WEXITSTATUS(status) == 0;
         pid_ = -1;
@@ -70,7 +75,10 @@ class child_process {
     const auto now = std::chrono::steady_clock::now();
     for (auto it = list.begin(); it != list.end();) {
       int status = 0;
-      const pid_t done = waitpid(it->pid, &status, WNOHANG);
+      pid_t done = -1;
+      do {
+        done = waitpid(it->pid, &status, WNOHANG);
+      } while (done < 0 && errno == EINTR);
       if (done == it->pid || done < 0) {
         it = list.erase(it);
         continue;
