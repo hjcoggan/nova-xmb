@@ -39,6 +39,13 @@ class CTestTimeoutTests(unittest.TestCase):
         for name, seconds in sorted(covered.items()):
             self.assertTrue(1 <= seconds <= 600, f'{name} TIMEOUT {seconds}')
 
+    def test_timeouts_name_real_tests(self):
+        text = CMAKE_LISTS.read_text()
+        defined = add_test_names(text)
+        covered = timeout_covered_names(text)
+        orphaned = sorted(set(covered) - defined)
+        self.assertEqual(orphaned, [], f'TIMEOUT on unknown tests: {orphaned}')
+
 
 if __name__ == '__main__':
     unittest.main()
