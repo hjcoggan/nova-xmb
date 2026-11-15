@@ -305,6 +305,18 @@ void an_oversized_ipc_message_is_rejected() {
   close(fds[0]);
 }
 
+void an_ipc_message_at_the_limit_is_accepted() {
+  int fds[2];
+  require(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "limit socketpair");
+  fcntl(fds[0], F_SETFL, fcntl(fds[0], F_GETFL) | O_NONBLOCK);
+  const char line[] = "12345678\n";
+  require(write(fds[1], line, sizeof(line) - 1) == static_cast<ssize_t>(sizeof(line) - 1), "write limit-sized message");
+  close(fds[1]);
+  const auto message = openxmb::xmb::read_ipc_message(fds[0], 500, 8);
+  require(message && *message == "12345678", "the newline is outside the configured byte limit");
+  close(fds[0]);
+}
+
 void panels_grow_and_fade() {
   const auto start = glass::panel_in(0);
   require(near(start.alpha, 0) && near(start.scale, 0.96F), "panels start clear and small");
@@ -348,6 +360,7 @@ int main() {
   fatal_fd_errors_do_not_spin_timeout();
   iwctl_parsers_match_exact_fields_and_strip_ansi();
   an_oversized_ipc_message_is_rejected();
+  an_ipc_message_at_the_limit_is_accepted();
   pause_panel_waits_for_the_still_at_most_250_ms();
   a_failed_capture_shows_the_fallback_panel();
   a_late_still_is_ignored_after_resume();
