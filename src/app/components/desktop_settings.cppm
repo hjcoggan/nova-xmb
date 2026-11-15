@@ -611,14 +611,26 @@ class nova_update_item final : public progress_item {
 
         void reject_oversized_event() {
             std::lock_guard<std::mutex> lock(mutex);
-            failed=true;
-            last_message="System update emitted an oversized event.";
+            if(!failed && !finished) {
+                failed=true;
+                last_message="System update emitted an oversized event.";
+            }
+        }
+        void reject_invalid_event() {
+            std::lock_guard<std::mutex> lock(mutex);
+            if(!failed && !finished) {
+                failed=true;
+                last_message="nova-update emitted an invalid event.";
+            }
         }
         void handle_line(std::string line) {
             while(!line.empty() && (line.back()=='\n' || line.back()=='\r')) line.pop_back();
             if(line.empty()) return;
             const auto parsed=nlohmann::json::parse(line,nullptr,false);
-            if(parsed.is_discarded() || !parsed.is_object()) return;
+            if(parsed.is_discarded() || !parsed.is_object()) {
+                reject_invalid_event();
+                return;
+            }
             try {
                 std::lock_guard<std::mutex> lock(mutex);
                 if(failed || finished) return;
@@ -645,11 +657,7 @@ class nova_update_item final : public progress_item {
                     }
                 }
             } catch(const nlohmann::json::exception&) {
-                std::lock_guard<std::mutex> lock(mutex);
-                if(!failed && !finished) {
-                    failed=true;
-                    last_message="nova-update emitted an invalid event.";
-                }
+                reject_invalid_event();
             }
         }
         void read_events() {
