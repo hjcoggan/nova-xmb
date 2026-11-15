@@ -9,8 +9,8 @@
 namespace openxmb::xmb {
 
 // Measurements use the same 1920x1080 logical canvas as the root XMB scene.
-// The frame deliberately extends beyond the logical right edge: the original
-// UI draws an open-right U rather than a closed rounded rectangle.
+// On the console the frame is a glass capsule floating frame_inset in from
+// the top-right corner of what is on screen.
 struct StatusBarMetrics {
   static constexpr float logical_width = 1920.0F;
   static constexpr float logical_height = 1080.0F;
@@ -20,6 +20,13 @@ struct StatusBarMetrics {
   static constexpr float frame_width = 590.0F;
   static constexpr float frame_height = 57.0F;
   static constexpr float frame_corner_radius = 6.0F;
+  static constexpr float frame_inset = 24.0F;
+
+  [[nodiscard]] static constexpr float frame_right() noexcept { return logical_width - frame_inset; }
+  // visible_top: the logical y of the top of the screen (negative when the
+  // canvas is cropped).
+  [[nodiscard]] static constexpr float frame_top(float visible_top) noexcept { return visible_top + frame_inset; }
+  [[nodiscard]] static constexpr float frame_radius(float height) noexcept { return height * 0.5F; }
 
   static constexpr float icon_center_x = 1789.5F;
   static constexpr float icon_center_y = 103.5F;

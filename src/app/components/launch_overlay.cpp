@@ -17,6 +17,7 @@
  */
 
 module;
+#include "openxmb/xmb/glass.hpp"
 
 #include "../../localization/shell_locale.hpp"
 #include <algorithm>
@@ -82,7 +83,7 @@ namespace app {
         renderer.push_color(glm::vec4(1.0F, 1.0F, 1.0F, reveal));
 
         // The game's banner on a glass card, at its own proportions.
-        constexpr float card_max_w = 620.0F, card_max_h = 330.0F, pad = 18.0F;
+        constexpr float card_max_w = 616.0F, card_max_h = 328.0F, pad = 24.0F;
         float card_bottom = top + height * 0.42F;
         if(artwork && artwork->loaded && artwork->width > 0 && artwork->height > 0) {
             const float fit = std::min(card_max_w / static_cast<float>(artwork->width),
@@ -90,7 +91,7 @@ namespace app {
             const float w = static_cast<float>(artwork->width) * fit;
             const float h = static_cast<float>(artwork->height) * fit;
             const float y = top + height * 0.40F - h * 0.5F;
-            c.glass(cx - w * 0.5F - pad, y - pad, w + pad * 2, h + pad * 2, 30.0F, 1.0F, 0.60F);
+            c.glass(cx - w * 0.5F - pad, y - pad, w + pad * 2, h + pad * 2);
             c.image(*artwork, cx - w * 0.5F, y, w, h);
             card_bottom = y + h + pad;
         }
@@ -105,7 +106,7 @@ namespace app {
             const float lit = 0.5F + 0.5F * std::sin(phase * 2.0F * 3.14159265F / 1.6F);
             const float size = 13.0F + 5.0F * lit;
             c.rect(cx + (static_cast<float>(i) - 1.0F) * 38.0F - size * 0.5F, dots_y - size * 0.5F,
-                size, size, {0.80F, 0.90F, 1.0F, 0.28F + 0.72F * lit}, size * 0.5F);
+                size, size, {1.0F, 1.0F, 1.0F, 0.28F + 0.72F * lit}, size * 0.5F);
         }
 
         if(seconds > 9.0F) {

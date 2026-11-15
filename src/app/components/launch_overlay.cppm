@@ -45,6 +45,7 @@ export class launch_overlay : public component {
         ~launch_overlay() override;
 
         [[nodiscard]] bool is_opaque() const override { return true; }
+        [[nodiscard]] std::array<float, 3> backdrop_srgb() const override { return {8.0F / 255.0F, 16.0F / 255.0F, 40.0F / 255.0F}; }
         [[nodiscard]] bool covers_scene() const override;
         [[nodiscard]] bool do_fade_in() const override { return false; }
         [[nodiscard]] bool do_fade_out() const override { return true; }

@@ -1,4 +1,5 @@
 module;
+#include "openxmb/xmb/glass_draw.hpp"
 
 #include <algorithm>
 #include <array>
@@ -652,14 +653,17 @@ void StatusBarRenderer::render(auroreengine::gui_renderer &renderer,
   const auto metrics =
       renderer.text_line_metrics_pixels(text_px) / scale_guard;
   const auto logical_text_h = metrics.x + metrics.y;
-  const auto frame_height = logical_text_h + 12.0F;
+  const auto frame_height = logical_text_h + 16.0F;
   const auto icon_radius = 10.5F;
   const auto icon_scale = icon_radius / StatusBarMetrics::icon_radius;
-  const auto frame_y = StatusBarMetrics::frame_y;
+  // A glass capsule floating in from the top-right corner of the screen.
+  const auto visible_top = layout.offset_y < 0.0F ? -layout.offset_y / layout.scale : 0.0F;
+  const auto frame_y = StatusBarMetrics::frame_top(visible_top);
   const auto icon_center_y = frame_y + frame_height * 0.5F;
+  const auto end_pad = StatusBarMetrics::frame_radius(frame_height) * 0.8F;
 
   const auto icon_center_x =
-      StatusBarMetrics::logical_width - 14.0F - icon_radius;
+      StatusBarMetrics::frame_right() - end_pad - icon_radius;
   const auto text_right_x = icon_center_x - icon_radius - 10.0F;
   const auto text_left_x = text_right_x - text_w_logical;
 
@@ -692,11 +696,12 @@ void StatusBarRenderer::render(auroreengine::gui_renderer &renderer,
     cursor_x = battery_left;
   }
 
-  const auto frame_x = std::max(0.0F, cursor_x - 14.0F);
-  const auto frame_x_norm = layout.x(frame_x);
-  const auto glass_w = std::max(0.1F, (1.0F - frame_x_norm) * 2.0F);
-  renderer.draw_glass_frame(frame_x_norm, layout.y(frame_y), glass_w,
-                            layout.height(frame_height), opacity);
+  const auto frame_x = std::max(0.0F, cursor_x - end_pad);
+  const auto frame_w = StatusBarMetrics::frame_right() - frame_x;
+  openxmb::xmb::glass::draw_glass_px<auroreengine::glass_panel_params, auroreengine::simple_params>(
+      renderer, layout.offset_x + frame_x * layout.scale, layout.offset_y + frame_y * layout.scale,
+      frame_w * layout.scale, frame_height * layout.scale, openxmb::xmb::glass::variant::regular,
+      StatusBarMetrics::frame_radius(frame_height) * layout.scale, opacity, layout.scale);
 
   if (wifi_present) {
     draw_wifi_indicator(renderer, layout, wifi_left, icon_center_y,
@@ -715,7 +720,7 @@ void StatusBarRenderer::render(auroreengine::gui_renderer &renderer,
     renderer.draw_text_pixels(text, x, text_px_y + layout.scale, text_px,
                               {0.0F, 0.0F, 0.0F, 0.5F * opacity}, 0.7F);
     renderer.draw_text_pixels(text, x, text_px_y, text_px,
-                              {1.0F, 1.0F, 1.0F, 0.92F * opacity}, 0.7F);
+                              {1.0F, 1.0F, 1.0F, 1.0F * opacity}, 0.7F);
   };
   if (battery_present) {
     draw_label(battery_text, battery_text_left);

@@ -17,6 +17,7 @@
  */
 
 module;
+#include "openxmb/xmb/glass.hpp"
 
 #include "dialog_text_layout.hpp"
 #include "../../localization/shell_locale.hpp"
@@ -119,33 +120,24 @@ bool choice_overlay::select_relative(action dir) {
 }
 
 void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* xmb) {
-    (void)xmb;
+    namespace glass = openxmb::xmb::glass;
 
     // A glass sheet on the right, in place of the firmware's lavender wash:
     // the menu stays visible beside it, slightly dimmed, and the list sits
     // on smoked glass so it reads over any wallpaper.
-    const auto open_elapsed =
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - opened_time);
-    const auto open_linear = std::clamp(
-        open_elapsed / std::chrono::duration<double>(open_duration), 0.0, 1.0);
-    const auto open_alpha =
-        static_cast<float>(open_linear * open_linear * (3.0 - 2.0 * open_linear));
+    const auto steady_now = std::chrono::steady_clock::now();
+    const float now_ms = std::chrono::duration<float, std::milli>(steady_now.time_since_epoch()).count();
+    const auto pose = glass::panel_in(std::chrono::duration<float, std::milli>(steady_now - opened_time).count());
+    const float open_alpha = pose.alpha;
     overlay_canvas canvas(renderer);
+    // Room for the hint bar below the sheet.
+    constexpr float hint_reserve = 112.0F;
     constexpr float panel_right = 1860.0F / 1920.0F;
     const float panel_edge_authored = (panel_right * static_cast<float>(renderer.frame_size.width) - canvas.ox) / canvas.scale;
-    const float x = panel_edge_authored - 357.0F + (1.0F - open_alpha) * 36.0F;
+    const float x = panel_edge_authored - 357.0F;
     canvas.rect(canvas.visible_left() - 2, canvas.visible_top() - 2,
         canvas.visible_right() - canvas.visible_left() + 4, canvas.visible_bottom() - canvas.visible_top() + 4,
         {0.0F, 0.01F, 0.04F, 0.30F * open_alpha});
-
-    auto now = std::chrono::system_clock::now();
-    double selected = selection_index;
-    auto time_since_transition = std::chrono::duration<double>(now - last_selection_time);
-    if(time_since_transition < transition_duration) {
-        double p = std::clamp(time_since_transition / transition_duration, 0.0, 1.0);
-        p = p * p * (3.0 - 2.0 * p);
-        selected = last_selection_index + (selected - last_selection_index) * p;
-    }
 
     // x already computed above with overlay_canvas so the panel and text share bounds.
     const float ui=config::CONFIG.textScale;
@@ -170,17 +162,19 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
         float rows_height=0;
         for(const auto row:row_heights)rows_height+=row;
         const float sheet_top=(top_action.empty()?top:top_action_y*1080-metrics.x)-34.0F;
-        const float sheet_bottom=std::min(canvas.visible_bottom()-26.0F,top+rows_height+26.0F);
-        canvas.glass(x-36.0F,sheet_top,357.0F+58.0F,sheet_bottom-sheet_top,34.0F,open_alpha);
+        const float sheet_bottom=std::min(canvas.visible_bottom()-hint_reserve,top+rows_height+glass::card_padding);
+        const float sheet_w=357.0F+58.0F,sheet_h=sheet_bottom-sheet_top;
+        canvas.glass(x-36.0F+sheet_w*(1.0F-pose.scale)*0.5F,sheet_top+sheet_h*(1.0F-pose.scale)*0.5F,
+            sheet_w*pose.scale,sheet_h*pose.scale,glass::variant::regular,glass::card_radius,open_alpha);
     }
     if(!top_action.empty()) {
         auto labels=dialog_text::wrap(top_action,available_width*canvas.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});
         if(labels.size()>2){labels.resize(2);labels.back()=dialog_text::ellipsize(labels.back()+"…",available_width*canvas.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});}
         const float baseline=top_action_y*1080;
-        for(std::size_t i=0;i<labels.size();++i)canvas.text(labels[i],x,baseline+i*pitch,24,{0.80F,0.88F,1.0F,0.85F*open_alpha});
+        for(std::size_t i=0;i<labels.size();++i)canvas.text(labels[i],x,baseline+i*pitch,24,{1,1,1,glass::text_secondary*open_alpha});
         top=std::max(top,baseline+(labels.size()-1)*pitch+metrics.y+24*ui);
     }
-    const float bottom=std::min(1000.0F,canvas.visible_bottom()-44.0F),viewport=std::max(line_height,bottom-top);
+    const float bottom=std::min(1000.0F,canvas.visible_bottom()-hint_reserve-glass::card_padding),viewport=std::max(line_height,bottom-top);
     const auto window=dialog_text::choice_window(row_heights,selection_index,viewport,first_visible);
     first_visible=window.first;
     selected_page_lines=dialog_text::line_capacity(viewport,pitch,line_height);
@@ -191,14 +185,19 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
         (357.0F+34.0F)*canvas.scale/renderer.frame_size.width,(viewport+24.0F)*canvas.scale/renderer.frame_size.height);
     float y=top+metrics.x;
     const float swatch_inset=swatches.empty()?0.0F:44.0F;
+    {
+        // One lit capsule, sliding to the selected row.
+        float row_y=top+metrics.x;
+        for(std::size_t i=window.first;i<window.last&&i<selection_index;++i) row_y+=row_heights[i];
+        if(selection_index>=window.first&&selection_index<window.last) {
+            const float row_height=row_heights[selection_index]-12*ui;
+            focus.move_to({x-18.0F,row_y-metrics.x-9.0F,available_width+30.0F,row_height+18.0F},now_ms);
+            const auto lit=focus.at(now_ms);
+            canvas.glass(lit.x,lit.y,lit.w,lit.h,glass::variant::focus,std::min(lit.h*0.5F,glass::concentric_radius(glass::card_radius,18.0F)),open_alpha);
+        }
+    }
     for(std::size_t i=window.first;i<window.last;++i) {
-        const double focus=1-std::clamp(std::abs(static_cast<double>(i)-selected),0.0,1.0);
-        const float eased=static_cast<float>(focus*focus*(3-2*focus));
         const bool focused=i==selection_index;
-        const float row_height=row_heights[i]-12*ui;
-        // The lit capsule follows the selection from row to row.
-        if(eased>0.01F)
-            canvas.glass_focus(x-18.0F,y-metrics.x-9.0F,available_width+30.0F,row_height+18.0F,eased*open_alpha,26.0F);
         if(i<swatches.size()) {
             canvas.rect(x-2.0F,y-metrics.x+(line_height-28.0F)*0.5F-1.0F,30,30,{1,1,1,0.55F*open_alpha},8);
             canvas.rect(x,y-metrics.x+(line_height-28.0F)*0.5F+1.0F,26,26,{swatches[i],open_alpha},6);
@@ -207,7 +206,7 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
         const auto& lines=wrapped_choices[i];
         const auto count=std::min(lines.size()-start,selected_page_lines);
         for(std::size_t line=0;line<count;++line)
-            canvas.text(lines[start+line],x+swatch_inset,y+line*pitch,26,{1,1,1,(0.78F+0.22F*eased)*open_alpha});
+            canvas.text(lines[start+line],x+swatch_inset,y+line*pitch,26,{1,1,1,glass::text_primary*open_alpha});
         y+=row_heights[i];
     }
     renderer.reset_clip();
@@ -217,11 +216,14 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
     if(window.first)canvas.arrow(centre,top-20.0F,16.0F,direction::up,{1,1,1,0.85F*open_alpha});
     if(window.last<choices.size())canvas.arrow(centre,top+viewport+20.0F,16.0F,direction::down,{1,1,1,0.85F*open_alpha});
     if(selected_total_lines>selected_page_lines) {
-        const float y_more=std::min(1064.0F,canvas.visible_bottom()-8.0F);
+        const float y_more=bottom+20.0F;
         canvas.arrow(x+6.0F,y_more-6.0F,12.0F,direction::left,{1,1,1,open_alpha});
         canvas.text("More text",x+20.0F,y_more,16,{1,1,1,open_alpha});
         canvas.arrow(x+112.0F,y_more-6.0F,12.0F,direction::right,{1,1,1,open_alpha});
     }
+    renderer.push_color({1,1,1,open_alpha});
+    xmb->render_hint_bar(renderer,std::array{std::pair{action::ok,"Select"},std::pair{action::cancel,"Back"}});
+    renderer.pop_color();
 }
 
 }

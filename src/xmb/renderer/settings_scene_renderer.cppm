@@ -1,4 +1,6 @@
 module;
+#include "openxmb/xmb/glass.hpp"
+#include "openxmb/xmb/glass_draw.hpp"
 
 #include "openxmb/xmb/settings_scene.hpp"
 #include "openxmb/xmb/background.hpp"
@@ -121,7 +123,8 @@ void draw_icon(auroreengine::gui_renderer &renderer,
   // Covers use the same fixed card as the crossbar (SelectionLens).
   // On the console every icon fits the shared row box; elsewhere only covers.
   const bool boxed = icon.preserve_color || config::CONFIG.console_mode();
-  const double slot_w = boxed ? SelectionLens::box_width(row.icon_extent) : row.icon_extent;
+  // Settings rows carry square icons only, so their box is square.
+  const double slot_w = boxed ? SelectionLens::box_width(row.icon_extent, false) : row.icon_extent;
   const double slot_h = boxed ? SelectionLens::box_height(row.icon_extent) : row.icon_extent;
   double draw_w = slot_w;
   double draw_h = slot_h;
@@ -155,39 +158,23 @@ void draw_icon(auroreengine::gui_renderer &renderer,
 }
 
 // The same clear-glass lens the crossbar puts under its selected row
-// (app::xmb_canvas::glass_clear), drawn in this renderer's layout space.
+// (app::xmb_canvas::glass with variant::clear), in this renderer's layout space.
 void draw_focus_lens(auroreengine::gui_renderer &renderer,
                      const ContainedLayout &layout, const SettingsRowVisual &row,
                      double right_x) {
+  namespace glass = openxmb::xmb::glass;
   const auto alpha = static_cast<float>(row.alpha);
   if (alpha <= 0.001F) return;
-  const auto rounded = [&](double x, double y, double w, double h,
-                           glm::vec4 colour, double radius) {
-    if (w <= 0 || h <= 0) return;
-    auroreengine::simple_params parameters{};
-    parameters.aspect_ratio = static_cast<float>(w / h);
-    parameters.border_radius.fill(static_cast<float>(std::min(radius / h, 0.5)));
-    renderer.draw_rect({layout.x(x), layout.y(y)},
-                       {static_cast<float>(w * layout.scale / layout.framebuffer_width),
-                        static_cast<float>(h * layout.scale / layout.framebuffer_height)},
-                       colour, parameters);
-  };
-  const auto linear = [](float v) {
-    v /= 255.0F;
-    return v <= 0.04045F ? v / 12.92F : std::pow((v + 0.055F) / 1.055F, 2.4F);
-  };
-  constexpr double rim = 1.6, radius = SelectionLens::radius;
-  const double left = SelectionLens::left(row.icon_center_x, row.icon_extent);
+  const double left = SelectionLens::left(row.icon_center_x, row.icon_extent, false);
   const double height = SelectionLens::height(row.icon_extent);
   const double top = row.center_y - height * 0.5;
   const double width = right_x - left;
-  rounded(left, top, width, height,
-          {linear(205), linear(222), linear(255), 0.34F * alpha}, radius);
-  rounded(left + rim, top + rim, width - 2 * rim, height - 2 * rim,
-          {linear(20), linear(44), linear(110), 0.34F * alpha}, radius - rim);
-  // Sheen on the upper half.
-  rounded(left + rim, top + rim, width - 2 * rim, (height - 2 * rim) * 0.5,
-          {1, 1, 1, 0.05F * alpha}, radius - rim);
+  if (width <= 0 || height <= 0) return;
+  glass::draw_glass_px<auroreengine::glass_panel_params, auroreengine::simple_params>(
+      renderer, layout.offset_x + static_cast<float>(left) * layout.scale,
+      layout.offset_y + static_cast<float>(top) * layout.scale,
+      static_cast<float>(width) * layout.scale, static_cast<float>(height) * layout.scale,
+      glass::variant::clear, static_cast<float>(SelectionLens::radius) * layout.scale, alpha, layout.scale);
 }
 
 void draw_focused_label(auroreengine::gui_renderer &renderer,
@@ -301,8 +288,9 @@ void SettingsSceneRenderer::render(auroreengine::gui_renderer &renderer,
     row.alpha *= edge_fade;
     if (config::CONFIG.console_mode()) {
       // Labels start where they do in the other columns.
-      row.label_x += SelectionLens::label_shift;
-      row.description_x += SelectionLens::label_shift;
+      // One shift for every row (focused or not), so labels stay aligned.
+      row.label_x += SelectionLens::label_shift_for(SettingsSceneMetrics::focused_icon_extent, false);
+      row.description_x += SelectionLens::label_shift_for(SettingsSceneMetrics::focused_icon_extent, false);
     }
     row.value_alpha *= edge_fade;
     row.description_alpha *= edge_fade;

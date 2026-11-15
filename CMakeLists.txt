@@ -823,6 +823,14 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   add_test(NAME openxmb_status_bar_tests
     COMMAND openxmb_status_bar_tests)
 
+  add_executable(openxmb_glass_tests
+    tests/xmb/glass_tests.cpp
+  )
+  set_target_properties(openxmb_glass_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+  openxmb_configure_native_test(openxmb_glass_tests)
+  add_test(NAME openxmb_glass_tests
+    COMMAND openxmb_glass_tests)
+
   add_executable(openxmb_live_crossbar_contract_tests
     tests/xmb/live_crossbar_contract_tests.cpp
   )

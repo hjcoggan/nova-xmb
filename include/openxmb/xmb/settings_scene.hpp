@@ -70,8 +70,20 @@ struct SelectionLens {
   // Every row's image, icon or logo, is fitted into this box, so rows in
   // every column have the same size; labels start the same distance after it.
   [[nodiscard]] static constexpr double box_width(double extent) noexcept { return extent * card_width; }
+  // A column with no wide logo uses a square box, so its labels are not
+  // pushed away from small icons; rows within one column stay aligned.
+  [[nodiscard]] static constexpr double box_width(double extent, bool wide_art) noexcept {
+    return wide_art ? box_width(extent) : box_height(extent);
+  }
+  [[nodiscard]] static constexpr double left(double icon_center_x, double extent, bool wide_art) noexcept {
+    return icon_center_x - box_width(extent, wide_art) * 0.5 - left_padding;
+  }
   [[nodiscard]] static constexpr double box_height(double extent) noexcept { return extent * card_height; }
   static constexpr double label_shift = 48.0;
+  // The label offset that keeps the same gap after the column's box.
+  [[nodiscard]] static constexpr double label_shift_for(double extent, bool wide_art) noexcept {
+    return label_shift - (box_width(extent) - box_width(extent, wide_art)) * 0.5;
+  }
 };
 
 enum class SettingsScenePresence { visible, entering, exiting, hidden };

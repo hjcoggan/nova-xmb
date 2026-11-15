@@ -19,6 +19,7 @@
  */
 
 module;
+#include "openxmb/xmb/glass.hpp"
 
 #include "dialog_text_layout.hpp"
 #include <algorithm>
@@ -96,11 +97,15 @@ namespace app {
         const float vis_cx = (vis_left + vis_right) * 0.5f;
         const float vis_cy = (vis_top + vis_bottom) * 0.5f;
 
-        c.rect(vis_left - 2.0f, vis_top - 2.0f, span_w + 4.0f, span_h + 4.0f, {0.0f, 0.0f, 0.0f, 0.55f});
+        namespace glass = openxmb::xmb::glass;
+        const glm::vec4 primary{1.0f, 1.0f, 1.0f, glass::text_primary};
+        c.rect(vis_left - 2.0f, vis_top - 2.0f, span_w + 4.0f, span_h + 4.0f, {0.0f, 0.0f, 0.0f, 0.30f});
 
         constexpr float margin = 40.0f;
+        // Room for the hint bar below the card.
+        constexpr float hint_reserve = 112.0f;
         const float max_card_w = std::max(280.0f, span_w - 2.0f * margin);
-        const float max_card_h = std::max(220.0f, span_h - 2.0f * margin);
+        const float max_card_h = std::max(220.0f, span_h - margin - hint_reserve);
         const float card_w = std::min(820.0f, max_card_w);
         const float content_width = std::max(160.0f, card_w - 120.0f);
 
@@ -134,14 +139,14 @@ namespace app {
         const float body_line_h = body_metrics.x + body_metrics.y;
         const float body_pitch = body_line_h + 8.0f * ui;
 
-        constexpr float top_pad = 36.0f;
-        const float title_status_gap = (!title_lines.empty() && !status_lines.empty()) ? 20.0f : 0.0f;
+        constexpr float top_pad = glass::card_padding;
+        const float title_status_gap = (!title_lines.empty() && !status_lines.empty()) ? 16.0f : 0.0f;
         constexpr float track_h = 12.0f;
         const float bar_gap = show_progress ? 24.0f : 0.0f;
-        const float bar_pct_gap = show_progress ? 18.0f : 0.0f;
+        const float bar_pct_gap = show_progress ? 16.0f : 0.0f;
         const float pct_h = show_progress ? body_line_h : 0.0f;
-        constexpr float bottom_gap = 22.0f;
-        constexpr float footer_h = 66.0f;
+        constexpr float bottom_gap = 0.0f;
+        constexpr float footer_h = glass::card_padding;
 
         const float fixed_h = top_pad + title_block_h + title_status_gap +
             bar_gap + (show_progress ? track_h : 0.0f) + bar_pct_gap + pct_h +
@@ -158,20 +163,21 @@ namespace app {
 
         const float card_h = std::min(max_card_h, fixed_h + status_block_h);
         const float card_x = vis_cx - card_w * 0.5f;
-        const float card_y = std::clamp(vis_cy - card_h * 0.5f, vis_top + margin, vis_bottom - margin - card_h);
+        const float card_y = std::clamp(vis_cy - card_h * 0.5f - hint_reserve * 0.5f, vis_top + margin,
+            std::max(vis_top + margin, vis_bottom - hint_reserve - card_h));
 
-        c.glass(card_x, card_y, card_w, card_h, 40.0f, 1.0f, 0.90f);
+        c.glass(card_x, card_y, card_w, card_h);
 
         const float title_top = card_y + top_pad;
         for(std::size_t i = 0; i < title_lines.size(); ++i) {
             c.text(title_lines[i], vis_cx, title_top + title_metrics.x + static_cast<float>(i) * title_pitch,
-                28, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, true);
+                28, primary, 0.0f, true);
         }
 
         const float status_top = title_top + title_block_h + title_status_gap;
         for(std::size_t i = 0; i < visible_status; ++i) {
             c.text(status_lines[i], vis_cx, status_top + body_metrics.x + static_cast<float>(i) * body_pitch,
-                24, {1.0f, 1.0f, 1.0f, 0.92f}, 0.0f, true);
+                24, primary, 0.0f, true);
         }
 
         if(show_progress) {
@@ -181,22 +187,21 @@ namespace app {
             const float pct = static_cast<float>(std::clamp(progress, 0.0, 1.0));
             const float fill_w = track_w * pct;
 
-            c.rect(track_x, track_y, track_w, track_h, {1.0f, 1.0f, 1.0f, 0.22f}, track_h * 0.5f);
+            const glm::vec4 accent{glass::srgb_to_linear(glass::accent_srgb[0]), glass::srgb_to_linear(glass::accent_srgb[1]),
+                                   glass::srgb_to_linear(glass::accent_srgb[2]), 1.0f};
+            c.rect(track_x, track_y, track_w, track_h, {1.0f, 1.0f, 1.0f, 0.25f}, track_h * 0.5f);
             if(fill_w > 1.0f) {
-                c.rect(track_x, track_y, fill_w, track_h, {1.0f, 1.0f, 1.0f, 1.0f},
-                    std::min(track_h, fill_w) * 0.5f);
+                c.rect(track_x, track_y, fill_w, track_h, accent, std::min(track_h, fill_w) * 0.5f);
             }
 
             const float pct_baseline = track_y + track_h + bar_pct_gap + body_metrics.x;
             c.text(std::format("{:.0f}%", pct * 100.0f), vis_cx, pct_baseline,
-                24, {1.0f, 1.0f, 1.0f, 0.90f}, 0.0f, true);
+                24, {1.0f, 1.0f, 1.0f, glass::text_secondary}, 0.0f, true);
         }
 
         const auto previous_scale = renderer.text_scale;
         renderer.text_scale = 1.0f;
-        const float hints_y = (c.oy + (card_y + card_h - footer_h * 0.5f - 4.0f) * c.scale) /
-            static_cast<float>(renderer.frame_size.height);
-        xmb->render_controller_buttons(renderer, 0.5f, hints_y, std::array{
+        xmb->render_hint_bar(renderer, std::array{
             std::pair{action::none, ""},
             std::pair{action::cancel, "Back"}
         });

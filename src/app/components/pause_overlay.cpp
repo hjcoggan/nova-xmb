@@ -1,6 +1,7 @@
 /* Nova pause overlay for OpenXMB (ROADMAP B3-B5). */
 
 module;
+#include "openxmb/xmb/glass.hpp"
 
 #include <algorithm>
 #include <array>
@@ -274,113 +275,115 @@ void pause_overlay::begin_closing() {
 }
 
 void pause_overlay::render(auroreengine::gui_renderer& renderer, shell* xmb) {
-    const float age = std::chrono::duration<float>(
-        std::chrono::steady_clock::now() - start_time).count();
-    const float settle = smooth01(age / 0.22f);
-    renderer.push_color(glm::vec4(1.0f, 1.0f, 1.0f, settle));
+    namespace glass = openxmb::xmb::glass;
+    const auto now = std::chrono::steady_clock::now();
+    const float age_ms = std::chrono::duration<float, std::milli>(now - start_time).count();
+    const float now_ms = std::chrono::duration<float, std::milli>(now.time_since_epoch()).count();
+    const auto pose = glass::panel_in(age_ms);
+    renderer.push_color(glm::vec4(1.0f, 1.0f, 1.0f, pose.alpha));
 
     overlay_canvas c(renderer);
     const float left = c.visible_left();
     const float top = c.visible_top();
     const float span_w = c.visible_right() - left;
     const float span_h = c.visible_bottom() - top;
-    // The frozen game stays recognisable behind a dark veil; the panel is
-    // dense enough that the game's own text does not show through it. While
-    // the game is being stopped the veil closes completely, so its window
-    // can vanish behind it unseen.
+    // The frozen game stays in view behind the glass, a little dimmed so the
+    // card reads as the top layer. While the game is being stopped the veil
+    // closes completely, so its window can vanish behind it unseen.
     const float closing_seconds = std::chrono::duration<float>(closing_for()).count();
     const float shut = closing() ? smooth01(closing_seconds / 0.25f) : 0.0f;
-    c.rect(left - 2, top - 2, span_w + 4, span_h + 4, {0.0f, 0.0f, 0.0f, 0.80f + 0.20f * shut});
+    c.rect(left - 2, top - 2, span_w + 4, span_h + 4, {0.0f, 0.0f, 0.0f, 0.30f + 0.70f * shut});
 
+    const glm::vec4 primary{1.0f, 1.0f, 1.0f, glass::text_primary};
+    const glm::vec4 secondary{1.0f, 1.0f, 1.0f, glass::text_secondary};
     const std::string& display_name = current_game_title.empty()
         ? current_game_id
         : current_game_title;
     if (closing()) {
         const std::string name = display_name.empty() ? std::string("Game") : display_name;
-        constexpr float w = 560.0f, h = 210.0f;
-        c.glass(960.0f - w * 0.5f, 540.0f - h * 0.5f - 24.0f, w, h, 40.0f, shut, 0.90f);
+        constexpr float w = 560.0f, h = 208.0f;
+        c.glass(960.0f - w * 0.5f, 540.0f - h * 0.5f - 24.0f, w, h, glass::variant::regular, glass::card_radius, shut);
         renderer.push_color({1.0f, 1.0f, 1.0f, shut});
-        c.text(std::string("Closing"), 960, 540.0f - 46.0f, 24, {0.72f, 0.82f, 1.0f, 0.90f}, 0.0f, true);
-        c.text(name, 960, 540.0f + 6.0f, 38, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, true);
+        c.text(std::string("Closing"), 960, 540.0f - 46.0f, 24, secondary, 0.0f, true);
+        c.text(name, 960, 540.0f + 6.0f, 38, primary, 0.0f, true);
         for (int i = 0; i < 3; ++i) {
             const float lit = 0.5f + 0.5f * std::sin((closing_seconds - static_cast<float>(i) * 0.33f) * 3.9f);
             const float size = 11.0f + 4.0f * lit;
             c.rect(960.0f + (static_cast<float>(i) - 1.0f) * 32.0f - size * 0.5f, 540.0f + 44.0f - size * 0.5f,
-                size, size, {0.80f, 0.90f, 1.0f, 0.28f + 0.72f * lit}, size * 0.5f);
+                size, size, {1.0f, 1.0f, 1.0f, 0.28f + 0.72f * lit}, size * 0.5f);
         }
         renderer.pop_color();
         renderer.pop_color();
         return;
     }
 
-    constexpr float card_w = 660.0f, row_h = 74.0f, row_gap = 10.0f, footer_h = 70.0f;
-    const float guide_h = guide_lines.empty() ? 0.0f : 26.0f + 32.0f * static_cast<float>(guide_lines.size());
-    const float card_h = 150.0f + row_count * (row_h + row_gap) + 6.0f + guide_h + footer_h;
+    // Layout on the 8-unit grid: padding 32, rows 72 high with 8 between.
+    constexpr float card_w = 656.0f, row_h = 72.0f, row_gap = 8.0f, header_h = 136.0f;
+    const float guide_h = guide_lines.empty() ? 0.0f : 24.0f + 32.0f * static_cast<float>(guide_lines.size());
+    const float card_h = header_h + row_count * (row_h + row_gap) - row_gap + guide_h + glass::card_padding;
     const float card_x = 960.0f - card_w * 0.5f;
-    const float card_y = 540.0f - card_h * 0.5f - 12.0f + (1.0f - settle) * 18.0f;
-    c.glass(card_x, card_y, card_w, card_h, 40.0f, 1.0f, 0.90f);
+    // Sit above the hint bar.
+    const float card_y = 540.0f - card_h * 0.5f - 40.0f;
+    {
+        const float sw = card_w * pose.scale, sh = card_h * pose.scale;
+        c.glass(960.0f - sw * 0.5f, card_y + card_h * 0.5f - sh * 0.5f, sw, sh);
+    }
 
-    c.text(std::string("Paused"), 960, card_y + 58.0f, 24, {0.72f, 0.82f, 1.0f, 0.90f}, 0.0f, true);
-    c.text(display_name.empty() ? std::string("Game") : display_name, 960, card_y + 108.0f, 38,
-        {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, true);
+    c.text(std::string("Paused"), 960, card_y + 56.0f, 24, secondary, 0.0f, true);
+    c.text(display_name.empty() ? std::string("Game") : display_name, 960, card_y + 104.0f, 38, primary, 0.0f, true);
 
-    const float rows_y = card_y + 150.0f;
-    const float row_x = card_x + 26.0f, row_w = card_w - 52.0f;
+    const float rows_y = card_y + header_h;
+    const float row_x = card_x + glass::card_padding * 0.75f, row_w = card_w - glass::card_padding * 1.5f;
     const auto text_width = [&](const std::string& text, float size) {
         return renderer.text_width_pixels(text, size * c.scale * config::CONFIG.textScale) / c.scale;
     };
+    const glm::vec4 accent{glass::srgb_to_linear(glass::accent_srgb[0]), glass::srgb_to_linear(glass::accent_srgb[1]),
+                           glass::srgb_to_linear(glass::accent_srgb[2]), 1.0f};
     const auto slider = [&](float y, int percent, bool focused) {
-        constexpr float track_w = 196.0f, track_h = 8.0f;
-        const float track_x = row_x + 258.0f, track_y = y + row_h * 0.5f - track_h * 0.5f;
+        constexpr float track_w = 200.0f, track_h = 8.0f;
+        const float track_x = row_x + 256.0f, track_y = y + row_h * 0.5f - track_h * 0.5f;
         const float fill = track_w * static_cast<float>(std::clamp(percent, 0, 100)) / 100.0f;
-        c.rect(track_x, track_y, track_w, track_h, {1.0f, 1.0f, 1.0f, 0.22f}, track_h * 0.5f);
-        if (fill > 1.0f) {
-            c.rect(track_x, track_y, fill, track_h, {1.0f, 1.0f, 1.0f, focused ? 1.0f : 0.80f}, track_h * 0.5f);
-        }
+        c.rect(track_x, track_y, track_w, track_h, {1.0f, 1.0f, 1.0f, 0.25f}, track_h * 0.5f);
+        if (fill > 1.0f) c.rect(track_x, track_y, fill, track_h, accent, track_h * 0.5f);
         if (focused) {
             using direction = xmb_canvas::arrow_direction;
-            c.arrow(track_x - 26.0f, y + row_h * 0.5f, 14.0f, direction::left, {1.0f, 1.0f, 1.0f, 0.9f});
-            c.arrow(track_x + track_w + 26.0f, y + row_h * 0.5f, 14.0f, direction::right, {1.0f, 1.0f, 1.0f, 0.9f});
+            c.arrow(track_x - 24.0f, y + row_h * 0.5f, 14.0f, direction::left, primary);
+            c.arrow(track_x + track_w + 24.0f, y + row_h * 0.5f, 14.0f, direction::right, primary);
         }
-        const float knob = focused ? 24.0f : 18.0f;
-        c.rect(track_x + fill - knob * 0.5f, y + row_h * 0.5f - knob * 0.5f, knob, knob,
-            {1.0f, 1.0f, 1.0f, 1.0f}, knob * 0.5f);
+        const float knob = focused ? 24.0f : 16.0f;
+        c.rect(track_x + fill - knob * 0.5f, y + row_h * 0.5f - knob * 0.5f, knob, knob, primary, knob * 0.5f);
         const auto value = std::to_string(percent) + "%";
-        c.text(value, row_x + row_w - 34.0f - text_width(value, 26), y + row_h * 0.5f + 10.0f, 26,
-            {1.0f, 1.0f, 1.0f, focused ? 1.0f : 0.80f});
+        c.text(value, row_x + row_w - 32.0f - text_width(value, 26), y + row_h * 0.5f + 10.0f, 26, focused ? primary : secondary);
     };
+
+    // The focus capsule slides between rows.
+    focus.move_to({row_x, rows_y + static_cast<float>(selected) * (row_h + row_gap), row_w, row_h}, now_ms);
+    const auto lit = focus.at(now_ms);
+    c.glass(lit.x, lit.y, lit.w, lit.h, glass::variant::focus, lit.h * 0.5f);
 
     const std::array<std::string, row_count> labels = {"Resume", "Volume", "Brightness", "Quit Game"};
     for (int i = 0; i < row_count; ++i) {
         const float y = rows_y + static_cast<float>(i) * (row_h + row_gap);
         const bool focused = i == selected;
-        if (focused) {
-            c.glass_focus(row_x, y, row_w, row_h, 1.0f);
-        }
-        const glm::vec4 colour = focused
-            ? glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)
-            : glm::vec4(1.0f, 1.0f, 1.0f, 0.80f);
         const float baseline = y + row_h * 0.5f + 11.0f;
         if (i == row_volume || i == row_brightness) {
-            c.text(labels[static_cast<std::size_t>(i)], row_x + 34.0f, baseline, 28, colour);
+            c.text(labels[static_cast<std::size_t>(i)], row_x + 32.0f, baseline, 28, primary);
             slider(y, i == row_volume ? volume_pct : brightness_pct, focused);
         } else {
-            c.text(labels[static_cast<std::size_t>(i)], 960, baseline, 30, colour, 0.0f, true);
+            c.text(labels[static_cast<std::size_t>(i)], 960, baseline, 30, primary, 0.0f, true);
         }
     }
 
     for (std::size_t g = 0; g < guide_lines.size(); ++g) {
-        const float gy = rows_y + row_count * (row_h + row_gap) + 34.0f + static_cast<float>(g) * 32.0f;
-        c.text(guide_lines[g], 960, gy, 21, {0.80f, 0.86f, 0.96f, 0.85f}, 0.0f, true);
+        const float gy = rows_y + row_count * (row_h + row_gap) + 24.0f + static_cast<float>(g) * 32.0f;
+        c.text(guide_lines[g], 960, gy, 21, secondary, 0.0f, true);
     }
 
     const auto previous_scale = renderer.text_scale;
     renderer.text_scale = 1.0f;
     // Confirm does nothing on a slider, so it is not offered there.
     const bool on_slider = selected == row_volume || selected == row_brightness;
-    const float hints_y = (c.oy + (card_y + card_h - footer_h * 0.5f - 4.0f) * c.scale) /
-        static_cast<float>(renderer.frame_size.height);
-    xmb->render_controller_buttons(renderer, 0.5f, hints_y, std::array{
+    xmb->render_hint_bar(renderer, std::array{
         std::pair{on_slider ? action::none : action::ok, "Select"},
         std::pair{action::cancel, "Resume"},
     });

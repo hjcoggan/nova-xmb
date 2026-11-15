@@ -1,17 +1,113 @@
-AuroreEngine changes carried by the nova branch (engine rev 52c724e3).
-Apply with `patch -p1` in the engine checkout; see nova/README.md.
-
-- wayland_surface: clear SDL2's opaque wl_region while the swapchain is
-  transparent, so sway alpha-blends the pause overlay over the frozen game.
-- swapchain_policy: prefer pre-multiplied composite alpha over opaque.
-- window: resizable window; while the frame loop is throttled (a game is
-  running) wait in short poll slices on a wake fd so pause IPC and resize
-  events are handled immediately.
-
-diff -ruN a/src/CMakeLists.txt b/src/CMakeLists.txt
---- a/src/CMakeLists.txt	2026-11-14 17:48:34.596130560 +1000
-+++ b/src/CMakeLists.txt	2026-11-14 17:48:34.600646635 +1000
-@@ -6,6 +6,7 @@
+diff --git c/shaders/image_renderer.glass.frag i/shaders/image_renderer.glass.frag
+index 804be6e..49dfd1d 100644
+--- c/shaders/image_renderer.glass.frag
++++ i/shaders/image_renderer.glass.frag
+@@ -5,13 +5,19 @@ layout(location = 0) out vec4 FragColor;
+ layout(push_constant) uniform PushConsts {
+     mat4 matrix; // unused here, kept for layout parity
+     vec4 color;
+-    uint index;   // unused here for glass variant
++    uint index;   // 0 icon, 1 frame, 2 panel
++    uint encoding;
++    uint pad0;
++    uint pad1;
++    vec4 shape;    // panel: size_px.xy, radius_px, flags (1 backdrop bound, 2 samples it)
++    vec4 material; // panel: refraction_px, blur_lod, tint, dim_strength
+ } pc;
+ 
+ layout(set = 0, binding = 0) uniform sampler2D uNormalMap;
+ layout(set = 0, binding = 1) uniform sampler2D uAmbMap;
+ layout(set = 0, binding = 2) uniform sampler2D uEnvMap;
+ layout(set = 0, binding = 3) uniform sampler2D uBackgroundMap;
++layout(set = 0, binding = 4) uniform sampler2D uBackdrop;
+ 
+ layout(location = 0) in vec2 vUV;
+ 
+@@ -49,6 +55,77 @@ vec4 glassIcon(vec2 uv) {
+     return vec4(srgb_to_linear(result),1);
+ }
+ 
++
++// Liquid Glass panel. Colour is linear; output is premultiplied.
++// The contrast cap (0.10) matches openxmb::xmb::glass::max_body_luminance:
++// white text over the body holds 7:1.
++float roundedBox(vec2 p, vec2 halfSize, float radius) {
++    vec2 q = abs(p) - halfSize + vec2(radius);
++    return length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - radius;
++}
++vec4 panel() {
++    vec2 size = max(pc.shape.xy, vec2(1.0));
++    float radius = clamp(pc.shape.z, 0.0, 0.5 * min(size.x, size.y));
++    float flags = pc.shape.w;
++    bool hasBackdrop = mod(flags, 2.0) >= 1.0;
++    bool samples = flags >= 2.0;
++    vec2 p = vUV * size - 0.5 * size;
++    float dist = roundedBox(p, 0.5 * size, radius);
++    float inside = -dist;
++    float coverage = clamp(inside + 0.5, 0.0, 1.0);
++    if(coverage <= 0.0) return vec4(0.0);
++    // Inward normal from the distance gradient.
++    const float e = 0.5;
++    vec2 grad = vec2(roundedBox(p + vec2(e, 0.0), 0.5 * size, radius) - roundedBox(p - vec2(e, 0.0), 0.5 * size, radius),
++                     roundedBox(p + vec2(0.0, e), 0.5 * size, radius) - roundedBox(p - vec2(0.0, e), 0.5 * size, radius));
++    vec2 outward = length(grad) > 1e-5 ? normalize(grad) : vec2(0.0, -1.0);
++    vec2 inward = -outward;
++    // Rim: thin and brightest where the edge faces a light from the upper left.
++    float edge = 1.0 - smoothstep(0.0, 1.5, inside);
++    float light = 0.5 + 0.5 * dot(outward, normalize(vec2(-0.6, -0.8)));
++    float rim = edge * (0.25 + 0.55 * light);
++    float sheen = 0.025 * (1.0 - smoothstep(0.0, 0.45, vUV.y));
++    float alpha = pc.color.a * coverage;
++    if(!samples) {
++        // Focus: light added inside a card, no body of its own.
++        vec3 lift = vec3(pc.material.z) + vec3(sheen * 0.5);
++        vec3 light_rgb = lift + pc.color.rgb * rim;
++        float a = clamp(max(pc.material.z, rim), 0.0, 1.0);
++        return vec4(light_rgb * alpha, a * alpha);
++    }
++    vec3 body;
++    if(hasBackdrop) {
++        vec2 screenSize = vec2(textureSize(uBackdrop, 0));
++        vec2 uv = gl_FragCoord.xy / screenSize;
++        float band = max(1.0, min(radius, 0.5 * min(size.x, size.y)));
++        float bend = pow(1.0 - clamp(inside / band, 0.0, 1.0), 2.0);
++        vec2 offset = inward * pc.material.x * bend / screenSize;
++        float lod = pc.material.y;
++        // A 3x3 tent over trilinear mips: smooth, no blocks from the box-
++        // filtered chain.
++        vec2 texel = exp2(lod) / screenSize;
++        vec3 c = vec3(0.0);
++        for(int y = -1; y <= 1; ++y)
++            for(int x = -1; x <= 1; ++x) {
++                float w = (2.0 - abs(float(x))) * (2.0 - abs(float(y)));
++                c += w * textureLod(uBackdrop, uv + offset + vec2(float(x), float(y)) * texel, lod).rgb;
++            }
++        c /= 16.0;
++        float grey = dot(c, vec3(0.2126, 0.7152, 0.0722));
++        c = max(mix(vec3(grey), c, 1.25), vec3(0.0)) * 1.08 + vec3(0.004);
++        float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
++        float tint = pc.material.z;
++        float dim = clamp(1.0 - (0.10 - tint) / max(lum, 1e-4), 0.0, 1.0) * pc.material.w;
++        body = c * (1.0 - dim) + vec3(tint);
++    } else {
++        // No backdrop: an opaque body dark enough for the same contrast.
++        body = srgb_to_linear(vec3(28.0, 32.0, 44.0) / 255.0);
++    }
++    body += vec3(sheen) + pc.color.rgb * rim;
++    float bodyAlpha = hasBackdrop ? 1.0 : 0.92;
++    return vec4(body * alpha * bodyAlpha, alpha * bodyAlpha);
++}
++
+ void main() {
+-    FragColor = pc.index==1u?frame():glassIcon(vUV);
++    FragColor = pc.index==2u?panel():pc.index==1u?frame():glassIcon(vUV);
+ }
+\ No newline at end of file
+diff --git c/src/CMakeLists.txt i/src/CMakeLists.txt
+index 22c4780..28dc4cd 100644
+--- c/src/CMakeLists.txt
++++ i/src/CMakeLists.txt
+@@ -6,6 +6,7 @@ set(SOURCES
    phase.cpp
    resource_loader.cpp
    shaders.cpp
@@ -19,7 +115,7 @@ diff -ruN a/src/CMakeLists.txt b/src/CMakeLists.txt
  )
  set(MODULE_SOURCES
    auroreengine.cppm
-@@ -108,3 +109,19 @@
+@@ -108,3 +109,19 @@ if(AUROREENGINE_USE_HB)
  else()
    message(STATUS "auroreengine: HarfBuzz not found — shaping disabled")
  endif()
@@ -39,9 +135,233 @@ diff -ruN a/src/CMakeLists.txt b/src/CMakeLists.txt
 +    endif()
 +  endif()
 +endif()
-diff -ruN a/src/swapchain_policy.hpp b/src/swapchain_policy.hpp
---- a/src/swapchain_policy.hpp	2026-11-14 17:48:34.597764197 +1000
-+++ b/src/swapchain_policy.hpp	2026-11-14 17:48:34.603076695 +1000
+diff --git c/src/components/image_renderer.cppm i/src/components/image_renderer.cppm
+index 6763463..0e226ca 100644
+--- c/src/components/image_renderer.cppm
++++ i/src/components/image_renderer.cppm
+@@ -34,6 +34,26 @@ struct push_constants {
+     glm::vec4 color;
+     unsigned int index;
+     unsigned int encoding;
++    unsigned int pad0{};
++    unsigned int pad1{};
++    // Glass panel mode only: size_px.xy, radius_px, flags (1 = a backdrop
++    // is bound, 2 = the panel samples it).
++    glm::vec4 shape{};
++    // Glass panel mode only: refraction_px, blur_lod, tint, dim_strength.
++    glm::vec4 material{};
++};
++static_assert(sizeof(push_constants) <= 128, "push constants must fit the guaranteed minimum");
++
++// A rounded glass panel over the mipmapped backdrop (see renderGlassPanel).
++export struct glass_panel_params {
++    glm::vec2 size_px{};
++    float radius_px{};
++    float alpha{1.0F};
++    float refraction_px{};
++    float blur_lod{};
++    float tint{};
++    float dim_strength{};
++    bool samples_backdrop{true};
+ };
+ 
+ export class image_renderer {
+@@ -93,6 +113,12 @@ export class image_renderer {
+                     vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat,
+                     0.0f, false, 0.0f, false, vk::CompareOp::eNever, 0.0f, 0.0f, vk::BorderColor::eFloatTransparentBlack, false);
+                 sampler = device.createSamplerUnique(sampler_info);
++                // The backdrop is sampled across its mip chain and must not
++                // wrap: refraction at a screen edge reads the edge itself.
++                vk::SamplerCreateInfo backdrop_info({}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear,
++                    vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge,
++                    0.0f, false, 0.0f, false, vk::CompareOp::eNever, 0.0f, vk::LodClampNone, vk::BorderColor::eFloatTransparentBlack, false);
++                backdropSampler = device.createSamplerUnique(backdrop_info);
+             }
+             {
+                 std::array<vk::DescriptorSetLayoutBinding, 1> bindings = {
+@@ -154,11 +180,13 @@ export class image_renderer {
+ 
+                 // Glass pipeline: normal, ambient ramp, environment matcap,
+                 // and live background samplers, matching xmb-web's icon pass.
+-                std::array<vk::DescriptorSetLayoutBinding,4> glassBindings = {
++                std::array<vk::DescriptorSetLayoutBinding,5> glassBindings = {
+                     vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment),
+                     vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment),
+                     vk::DescriptorSetLayoutBinding(2, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment),
+-                    vk::DescriptorSetLayoutBinding(3, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment)
++                    vk::DescriptorSetLayoutBinding(3, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment),
++                    // The mipmapped backdrop sampled by glass panels.
++                    vk::DescriptorSetLayoutBinding(4, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment)
+                 };
+                 glassDescriptorLayout = device.createDescriptorSetLayoutUnique(
+                     vk::DescriptorSetLayoutCreateInfo({}, glassBindings));
+@@ -235,7 +263,7 @@ export class image_renderer {
+             if(glassDescriptorLayout && pipelineLayoutGlass) {
+                 const auto descriptorCount = static_cast<uint32_t>(frameCount) * max_images;
+                 std::array<vk::DescriptorPoolSize,1> sizes = {
+-                    vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, descriptorCount * 4)
++                    vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, descriptorCount * 5)
+                 };
+                 glassDescriptorPool = device.createDescriptorPoolUnique(
+                     vk::DescriptorPoolCreateInfo({}, descriptorCount, sizes));
+@@ -293,40 +321,19 @@ export class image_renderer {
+             glassEnvironmentView = environmentView;
+         }
+ 
++        // The backdrop glass panels sample: a mipmapped copy of the scene
++        // behind the interface. A null view draws panels with their opaque
++        // fallback body.
++        void setGlassBackdrop(vk::ImageView view, unsigned mip_levels) {
++            glassBackdropView = view;
++            glassBackdropLevels = view ? mip_levels : 0;
++        }
++
+         // Glass icon variant: imported xmb-web normal map + live background.
+         void renderImageGlass(vk::CommandBuffer cmd, int frame, vk::RenderPass renderPass, vk::ImageView iconView,
+                               float x, float y, float scaleX, float scaleY, glm::vec4 color = glm::vec4(1.0,1.0,1.0,1.0),unsigned mode=0)
+         {
+-            if(!iconView) return;
+-            if(frame < 0) return;
+-            const auto frameIndex = static_cast<std::size_t>(frame);
+-            if(frameIndex >= glassDescriptorSets.size() || frameIndex >= glassDescriptorSetIndices.size()) return;
+-            auto& frameSets = glassDescriptorSets[frameIndex];
+-            auto& nextSet = glassDescriptorSetIndices[frameIndex];
+-            if(nextSet >= frameSets.size()) return;
+-            const auto descriptorSet = frameSets[nextSet++];
+-            const auto ambientView = glassAmbientView ? glassAmbientView : iconView;
+-            const auto environmentView = glassEnvironmentView ? glassEnvironmentView : iconView;
+-            const auto backgroundView = glassBackgroundView ? glassBackgroundView : iconView;
+-            std::array<vk::DescriptorImageInfo, 4> images = {
+-                vk::DescriptorImageInfo(sampler.get(), iconView, vk::ImageLayout::eShaderReadOnlyOptimal),
+-                vk::DescriptorImageInfo(sampler.get(), ambientView, vk::ImageLayout::eShaderReadOnlyOptimal),
+-                vk::DescriptorImageInfo(sampler.get(), environmentView, vk::ImageLayout::eShaderReadOnlyOptimal),
+-                vk::DescriptorImageInfo(sampler.get(), backgroundView, vk::ImageLayout::eShaderReadOnlyOptimal)
+-            };
+-            std::array<vk::WriteDescriptorSet, 4> writes = {
+-                vk::WriteDescriptorSet(descriptorSet, 0, 0, 1, vk::DescriptorType::eCombinedImageSampler, &images[0]),
+-                vk::WriteDescriptorSet(descriptorSet, 1, 0, 1, vk::DescriptorType::eCombinedImageSampler, &images[1]),
+-                vk::WriteDescriptorSet(descriptorSet, 2, 0, 1, vk::DescriptorType::eCombinedImageSampler, &images[2]),
+-                vk::WriteDescriptorSet(descriptorSet, 3, 0, 1, vk::DescriptorType::eCombinedImageSampler, &images[3])
+-            };
+-            device.updateDescriptorSets(writes, {});
+-
+-            const auto pipeline = pipelinesGlass.find(renderPass);
+-            if(pipeline == pipelinesGlass.end() || !pipeline->second) return;
+-            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->second.get());
+-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayoutGlass.get(), 0, descriptorSet, {});
+-
++            if(!bindGlass(cmd, frame, renderPass, iconView)) return;
+             glm::vec2 pos = glm::vec2(x, y)*2.0f - glm::vec2(1.0f);
+             push_constants push{};
+             push.matrix = glm::mat4(1.0f);
+@@ -339,6 +346,31 @@ export class image_renderer {
+             cmd.draw(4, 1, 0, 0);
+         }
+ 
++        // A rounded glass panel: blurred, refracted backdrop, a rim of
++        // colour rim.rgb at strength rim.a, the whole drawn at params.alpha. Position and size are
++        // normalised to the frame, like simple_renderer's rectangles.
++        void renderGlassPanel(vk::CommandBuffer cmd, int frame, vk::RenderPass renderPass,
++                              float x, float y, float width, float height, glm::vec4 rim, const glass_panel_params& params)
++        {
++            if(width <= 0 || height <= 0 || params.alpha <= 0.001f) return;
++            const auto anyView = glassBackgroundView ? glassBackgroundView : glassBackdropView;
++            if(!bindGlass(cmd, frame, renderPass, anyView)) return;
++            const glm::vec2 pos = glm::vec2(x, y)*2.0f - glm::vec2(1.0f);
++            push_constants push{};
++            push.matrix = glm::translate(glm::mat4(1.0f), glm::vec3(pos, 0.0f));
++            // The vertex quad spans 0..2 in clip space.
++            push.matrix = glm::scale(push.matrix, glm::vec3(width, height, 1.0f));
++            push.index = 2;
++            // The rim's strength rides in its colour; alpha is the panel's.
++            push.color = glm::vec4(glm::vec3(rim) * rim.a, params.alpha);
++            push.encoding = outputEncoding;
++            const float flags = (glassBackdropView ? 1.0f : 0.0f) + (params.samples_backdrop ? 2.0f : 0.0f);
++            push.shape = glm::vec4(params.size_px, params.radius_px, flags);
++            push.material = glm::vec4(params.refraction_px, params.blur_lod, params.tint, params.dim_strength);
++            cmd.pushConstants<push_constants>(pipelineLayoutGlass.get(), vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, push);
++            cmd.draw(4, 1, 0, 0);
++        }
++
+         void renderGlassFrame(vk::CommandBuffer cmd,int frame,vk::RenderPass pass,float x,float y,float width,float height,float opacity) {
+             if(!glassBackgroundView) return;
+             renderImageGlass(cmd,frame,pass,glassBackgroundView,x,y,width,height,{1,1,1,opacity},1);
+@@ -637,6 +669,37 @@ export class image_renderer {
+ 
+         vk::Device device;
+         vk::Extent2D frameSize;
++        bool bindGlass(vk::CommandBuffer cmd, int frame, vk::RenderPass renderPass, vk::ImageView iconView) {
++            if(!iconView) return false;
++            if(frame < 0) return false;
++            const auto frameIndex = static_cast<std::size_t>(frame);
++            if(frameIndex >= glassDescriptorSets.size() || frameIndex >= glassDescriptorSetIndices.size()) return false;
++            auto& frameSets = glassDescriptorSets[frameIndex];
++            auto& nextSet = glassDescriptorSetIndices[frameIndex];
++            if(nextSet >= frameSets.size()) return false;
++            const auto pipeline = pipelinesGlass.find(renderPass);
++            if(pipeline == pipelinesGlass.end() || !pipeline->second) return false;
++            const auto descriptorSet = frameSets[nextSet++];
++            const auto ambientView = glassAmbientView ? glassAmbientView : iconView;
++            const auto environmentView = glassEnvironmentView ? glassEnvironmentView : iconView;
++            const auto backgroundView = glassBackgroundView ? glassBackgroundView : iconView;
++            const auto backdropView = glassBackdropView ? glassBackdropView : backgroundView;
++            std::array<vk::DescriptorImageInfo, 5> images = {
++                vk::DescriptorImageInfo(sampler.get(), iconView, vk::ImageLayout::eShaderReadOnlyOptimal),
++                vk::DescriptorImageInfo(sampler.get(), ambientView, vk::ImageLayout::eShaderReadOnlyOptimal),
++                vk::DescriptorImageInfo(sampler.get(), environmentView, vk::ImageLayout::eShaderReadOnlyOptimal),
++                vk::DescriptorImageInfo(sampler.get(), backgroundView, vk::ImageLayout::eShaderReadOnlyOptimal),
++                vk::DescriptorImageInfo(backdropSampler.get(), backdropView, vk::ImageLayout::eShaderReadOnlyOptimal)
++            };
++            std::array<vk::WriteDescriptorSet, 5> writes{};
++            for(std::uint32_t i = 0; i < writes.size(); ++i)
++                writes[i] = vk::WriteDescriptorSet(descriptorSet, i, 0, 1, vk::DescriptorType::eCombinedImageSampler, &images[i]);
++            device.updateDescriptorSets(writes, {});
++            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->second.get());
++            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayoutGlass.get(), 0, descriptorSet, {});
++            return true;
++        }
++
+         double aspectRatio;
+ 
+         const gpu_features& features;
+@@ -661,6 +724,9 @@ export class image_renderer {
+         vk::ImageView glassAmbientView{};
+         vk::ImageView glassEnvironmentView{};
+         vk::ImageView glassBackgroundView{};
++        vk::ImageView glassBackdropView{};
++        unsigned glassBackdropLevels{};
++        vk::UniqueSampler backdropSampler;
+ 
+         std::vector<
+             std::vector<vk::DescriptorImageInfo>
+diff --git c/src/gui_renderer.cppm i/src/gui_renderer.cppm
+index c59f2ab..48e9c03 100644
+--- c/src/gui_renderer.cppm
++++ i/src/gui_renderer.cppm
+@@ -58,6 +58,7 @@ export class gui_renderer {
+             color_stack.push_back(this->color);
+             set_color(color);
+         }
++        [[nodiscard]] glm::vec4 current_color() const noexcept { return color; }
+         void pop_color() {
+             if(color_stack.empty())
+                 return;
+@@ -186,6 +187,11 @@ export class gui_renderer {
+             image_renderer->renderTexturedTriangles(commandBuffer,frame,renderPass,image,vertices,color,additive,depth);
+         }
+ 
++        // A rounded Liquid Glass panel; position and size normalised to the frame.
++        void draw_glass_panel(glm::vec2 position, glm::vec2 size, glm::vec4 rim, const glass_panel_params& params) {
++            apply_view();
++            image_renderer->renderGlassPanel(commandBuffer,frame,renderPass,position.x,position.y,size.x,size.y,rim,params);
++        }
+         void draw_glass_frame(float x,float y,float width,float height,float opacity=1) {
+             apply_view();image_renderer->renderGlassFrame(commandBuffer,frame,renderPass,x,y,width,height,opacity);
+         }
+diff --git c/src/swapchain_policy.hpp i/src/swapchain_policy.hpp
+index c1e5cd9..2715c64 100644
+--- c/src/swapchain_policy.hpp
++++ i/src/swapchain_policy.hpp
 @@ -5,7 +5,7 @@
  #include <initializer_list>
  namespace auroreengine::detail {
@@ -51,9 +371,11 @@ diff -ruN a/src/swapchain_policy.hpp b/src/swapchain_policy.hpp
                           VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR})
          if(supported&mode)return mode;
      throw std::runtime_error("Surface exposes no supported composite alpha mode");
-diff -ruN a/src/wayland_surface.cpp b/src/wayland_surface.cpp
---- a/src/wayland_surface.cpp	1970-01-01 10:00:00.000000000 +1000
-+++ b/src/wayland_surface.cpp	2026-11-14 17:48:34.600690177 +1000
+diff --git c/src/wayland_surface.cpp i/src/wayland_surface.cpp
+new file mode 100644
+index 0000000..e6eea18
+--- /dev/null
++++ i/src/wayland_surface.cpp
 @@ -0,0 +1,142 @@
 +#include "wayland_surface.hpp"
 +
@@ -197,9 +519,11 @@ diff -ruN a/src/wayland_surface.cpp b/src/wayland_surface.cpp
 +}
 +
 +} // namespace auroreengine::detail
-diff -ruN a/src/wayland_surface.hpp b/src/wayland_surface.hpp
---- a/src/wayland_surface.hpp	1970-01-01 10:00:00.000000000 +1000
-+++ b/src/wayland_surface.hpp	2026-11-14 17:48:34.600705678 +1000
+diff --git c/src/wayland_surface.hpp i/src/wayland_surface.hpp
+new file mode 100644
+index 0000000..c570936
+--- /dev/null
++++ i/src/wayland_surface.hpp
 @@ -0,0 +1,10 @@
 +#pragma once
 +
@@ -211,10 +535,11 @@ diff -ruN a/src/wayland_surface.hpp b/src/wayland_surface.hpp
 +bool wait_fd_readable(int fd, int timeout_ms);
 +
 +} // namespace auroreengine::detail
-diff -ruN a/src/window.cppm b/src/window.cppm
---- a/src/window.cppm	2026-11-14 17:48:34.598378244 +1000
-+++ b/src/window.cppm	2026-11-14 17:48:34.600811928 +1000
-@@ -14,6 +14,7 @@
+diff --git c/src/window.cppm i/src/window.cppm
+index de9922d..55151f7 100644
+--- c/src/window.cppm
++++ i/src/window.cppm
+@@ -14,6 +14,7 @@ module;
  #endif
  
  #include "swapchain_policy.hpp"
@@ -222,7 +547,7 @@ diff -ruN a/src/window.cppm b/src/window.cppm
  #include <algorithm>
  #include <cstdlib>
  #include <cstdint>
-@@ -49,6 +50,9 @@
+@@ -49,6 +50,9 @@ module;
  #ifdef SDL_WINDOW_SHOWN
  #undef SDL_WINDOW_SHOWN
  #endif
@@ -232,7 +557,7 @@ diff -ruN a/src/window.cppm b/src/window.cppm
  #ifdef SDL_WINDOW_VULKAN
  #undef SDL_WINDOW_VULKAN
  #endif
-@@ -146,6 +150,8 @@
+@@ -146,6 +150,8 @@ export struct window_config {
  
      vk::PresentModeKHR preferredPresentMode = vk::PresentModeKHR::eFifoRelaxed;
      int fpsLimit = -1;
@@ -241,7 +566,7 @@ diff -ruN a/src/window.cppm b/src/window.cppm
      vk::SampleCountFlagBits sampleCount = vk::SampleCountFlagBits::e1;
      bool profileFrames = false;
      uint64_t profileFrameInterval = 120;
-@@ -411,13 +417,35 @@
+@@ -411,13 +417,35 @@ export class window
                      afterEvents = now;
                      auto dt = std::chrono::duration<double>(now - lastFrame).count();
  
@@ -279,7 +604,7 @@ diff -ruN a/src/window.cppm b/src/window.cppm
                          }
                      }
                      lastFrame = now;
-@@ -558,6 +586,14 @@
+@@ -558,6 +586,14 @@ export class window
                      submitGraphics(submitInfo, headlessFences[imageIndex].get());
                      afterPresent = std::chrono::steady_clock::now();
                  } else {
@@ -294,7 +619,7 @@ diff -ruN a/src/window.cppm b/src/window.cppm
                      vk::PresentInfoKHR present_info(renderFinishedSemaphores[imageIndex].get(), swapchain.get(), imageIndex);
                      {
                          std::scoped_lock queueGuard(queueLock);
-@@ -732,6 +768,7 @@
+@@ -732,6 +768,7 @@ export class window
  
          sdl::unique_window win;
          uint32_t window_width, window_height;
@@ -302,7 +627,7 @@ diff -ruN a/src/window.cppm b/src/window.cppm
  
          vk::UniqueInstance instance;
          vk::UniqueSurfaceKHR surface;
-@@ -848,7 +885,7 @@
+@@ -848,7 +885,7 @@ export class window
              }
              win = sdl::unique_window(
                  sdl::CreateWindow(config.title.c_str(), rect.x, rect.y, rect.w, rect.h,

@@ -94,7 +94,7 @@ public:
         c.rect(0,199,1920,1,{1,1,1,0.75F});c.rect(0,879,1920,1,{1,1,1,0.75F});
         c.text("Change Binding",960,350,36,{1,1,1,1},0,true);
         c.text("Release the controls, then press a "+std::string(key_.starts_with("pad.")?"controller button":"keyboard key")+" for "+key_.substr(4),960,500,28,{1,1,1,1},0,true);
-        shell->render_controller_buttons(r,0.5F,0.81F,std::array{std::pair{action::cancel,"Cancel"}});
+        shell->render_hint_bar(r,std::array{std::pair{action::cancel,"Cancel"}});
     }
 private:
     std::string key_;bool armed_{};shell* host_{};

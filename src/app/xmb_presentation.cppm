@@ -11,6 +11,8 @@ module;
 #include <string_view>
 #include <vector>
 #include "openxmb/xmb/background.hpp"
+#include "openxmb/xmb/glass.hpp"
+#include "openxmb/xmb/glass_draw.hpp"
 #include "../localization/ui_literal_text.hpp"
 export module openxmb.app:xmb_presentation;
 import auroreengine;
@@ -105,39 +107,29 @@ struct xmb_canvas {
         const auto channel=[](float v){v/=255.0f;return v<=0.04045f?v/12.92f:std::pow((v+0.055f)/1.055f,2.4f);};
         return {channel(r),channel(g),channel(b),a};
     }
-    // A glass panel. `density` is how much of the scene behind it is hidden.
-    void glass(float x,float y,float w,float h,float radius=28,float alpha=1,float density=0.80f,bool shadow=true) const {
-        if(w<=0||h<=0||alpha<=0.001f) return;
-        radius=std::min(radius,std::min(w,h)*0.5f);
-        if(shadow) soft_rect(x-34,y-14,w+68,h+78,{0,0,0,0.38f*alpha},std::min(70.0f,(h+78)*0.5f));
-        // Rim: the whole shape in pale light, then the body inset by its width.
-        constexpr float rim=1.8f;
-        rect(x,y,w,h,srgb(196,214,255,0.30f*alpha),radius);
-        rect(x+rim,y+rim,w-2*rim,h-2*rim,srgb(9,14,32,density*alpha),std::max(0.0f,radius-rim));
-        // Sheen on the upper half, and the light catching the top edge.
-        rounded_gradient(x+rim,y+rim,w-2*rim,(h-2*rim)*0.5f,{1,1,1,0.060f*alpha},{1,1,1,0.0f},std::max(0.0f,radius-rim));
-        if(w>2*radius+8) soft_rect(x+radius,y,w-2*radius,rim,{1,1,1,0.34f*alpha},std::min(48.0f,(w-2*radius)*0.3f));
+    // The one glass primitive (openxmb/xmb/glass.hpp): `regular` for cards
+    // and bars, `clear` for a lens straight on the wallpaper, `focus` for
+    // the lit row inside a card. The engine panel samples the backdrop,
+    // blurs and bends it, adds the rim and keeps white text legible.
+    static auroreengine::glass_panel_params panel_params(openxmb::xmb::glass::variant v,float w_px,float h_px,float radius_px,float alpha) {
+        namespace glass=openxmb::xmb::glass;
+        const auto m=glass::material_for(v);
+        auroreengine::glass_panel_params p{};
+        p.size_px={w_px,h_px};
+        p.radius_px=glass::clamp_radius(radius_px,w_px,h_px);
+        p.alpha=alpha;
+        p.refraction_px=m.refraction_px;p.blur_lod=m.blur_lod;p.tint=m.tint;p.dim_strength=m.dim_strength;
+        p.samples_backdrop=m.samples_backdrop;
+        return p;
     }
-    // Clear glass: a lens over the wallpaper that lifts what sits on it
-    // without hiding the scene. Used under the focused row of the crossbar.
-    void glass_clear(float x,float y,float w,float h,float radius,float alpha=1) const {
-        if(w<=0||h<=0||alpha<=0.001f) return;
-        radius=std::min(radius,std::min(w,h)*0.5f);
-        constexpr float rim=1.6f;
-        soft_rect(x-22,y-6,w+44,h+44,{0,0,0,0.20f*alpha},std::min(48.0f,(h+44)*0.5f));
-        rect(x,y,w,h,srgb(205,222,255,0.34f*alpha),radius);
-        rect(x+rim,y+rim,w-2*rim,h-2*rim,srgb(20,44,110,0.34f*alpha),std::max(0.0f,radius-rim));
-        rounded_gradient(x+rim,y+rim,w-2*rim,(h-2*rim)*0.5f,{1,1,1,0.085f*alpha},{1,1,1,0.0f},std::max(0.0f,radius-rim));
-        if(w>2*radius+8) soft_rect(x+radius,y,w-2*radius,rim,{1,1,1,0.42f*alpha},std::min(48.0f,(w-2*radius)*0.3f));
+    static glm::vec4 rim_colour(openxmb::xmb::glass::variant v) {
+        const auto r=openxmb::xmb::glass::rim_for(v);
+        return {r[0],r[1],r[2],r[3]};
     }
-    // The focus capsule behind a selected row: lit blue glass.
-    void glass_focus(float x,float y,float w,float h,float alpha=1,float max_radius=1000) const {
-        if(w<=0||h<=0||alpha<=0.001f) return;
-        const float radius=std::min(h*0.5f,max_radius);
-        constexpr float rim=1.8f;
-        rect(x,y,w,h,srgb(214,230,255,0.58f*alpha),radius);
-        rect(x+rim,y+rim,w-2*rim,h-2*rim,srgb(46,84,168,0.72f*alpha),radius-rim);
-        rounded_gradient(x+rim,y+rim,w-2*rim,(h-2*rim)*0.5f,{1,1,1,0.13f*alpha},{1,1,1,0.0f},radius-rim);
+    void glass(float x,float y,float w,float h,openxmb::xmb::glass::variant v=openxmb::xmb::glass::variant::regular,
+               float radius=openxmb::xmb::glass::card_radius,float alpha=1) const {
+        openxmb::xmb::glass::draw_glass_px<auroreengine::glass_panel_params,auroreengine::simple_params>(
+            renderer,ox+x*scale,oy+y*scale,w*scale,h*scale,v,radius*scale,alpha,scale);
     }
     // --------------------------------------------------------------------
     void image(const auroreengine::texture& t,float x,float y,float w,float h,glm::vec4 color=glm::vec4(1)) const {

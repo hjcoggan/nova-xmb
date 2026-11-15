@@ -17,6 +17,7 @@
  */
 
 module;
+#include "openxmb/xmb/glass.hpp"
 
 #include "dialog_text_layout.hpp"
 #include "../../localization/shell_locale.hpp"
@@ -65,9 +66,13 @@ namespace app {
         }
 
         using clock = std::chrono::steady_clock;
-        float age = std::chrono::duration<float>(clock::now() - start_time).count();
-        float settle = smooth01(age / 0.28f);
-        renderer.push_color(glm::vec4(1.0f, 1.0f, 1.0f, settle));
+        namespace glass = openxmb::xmb::glass;
+        const auto now = clock::now();
+        const float age_ms = std::chrono::duration<float, std::milli>(now - start_time).count();
+        const float now_ms = std::chrono::duration<float, std::milli>(now.time_since_epoch()).count();
+        const auto pose = glass::panel_in(age_ms);
+        renderer.push_color(glm::vec4(1.0f, 1.0f, 1.0f, pose.alpha));
+        const glm::vec4 primary{1.0f, 1.0f, 1.0f, glass::text_primary};
 
         overlay_canvas c(renderer);
         const float vis_left = c.visible_left();
@@ -79,15 +84,17 @@ namespace app {
         const float vis_cx = (vis_left + vis_right) * 0.5f;
         const float vis_cy = (vis_top + vis_bottom) * 0.5f;
 
-        c.rect(vis_left - 2.0f, vis_top - 2.0f, span_w + 4.0f, span_h + 4.0f, {0.0f, 0.0f, 0.0f, 0.55f});
+        c.rect(vis_left - 2.0f, vis_top - 2.0f, span_w + 4.0f, span_h + 4.0f, {0.0f, 0.0f, 0.0f, 0.30f});
 
         constexpr float margin = 40.0f;
+        // Room for the hint bar below the card.
+        constexpr float hint_reserve = 112.0f;
         const float max_card_w = std::max(280.0f, span_w - 2.0f * margin);
-        const float max_card_h = std::max(240.0f, span_h - 2.0f * margin);
+        const float max_card_h = std::max(240.0f, span_h - margin - hint_reserve);
         const float card_w = std::min(960.0f, max_card_w);
         const float content_width = std::max(160.0f, card_w - 120.0f);
         const float choice_row_width = std::max(160.0f, card_w - 80.0f);
-        constexpr float choice_gap = 18.0f;
+        constexpr float choice_gap = 16.0f;
         const std::size_t choice_slots = std::max<std::size_t>(1, choices.size());
         const float choice_slot_w = std::min(360.0f,
             (choice_row_width - choice_gap * static_cast<float>(choice_slots - 1)) /
@@ -131,11 +138,11 @@ namespace app {
         const float choice_text_h = choice_line_h + static_cast<float>(max_choice_lines - 1) * choice_pitch;
         const float choice_slot_h = choices.empty() ? 0.0f : std::max(64.0f, choice_text_h + 22.0f);
 
-        constexpr float top_pad = 36.0f;
-        const float title_body_gap = title_lines.empty() ? 0.0f : 20.0f;
+        constexpr float top_pad = glass::card_padding;
+        const float title_body_gap = title_lines.empty() ? 0.0f : 16.0f;
         const float body_choice_gap = choices.empty() ? 0.0f : 24.0f;
-        const float choices_footer_gap = choices.empty() ? 22.0f : 16.0f;
-        constexpr float footer_h = 66.0f;
+        const float choices_footer_gap = 0.0f;
+        constexpr float footer_h = glass::card_padding;
 
         const float fixed_h = top_pad + title_block_h + title_body_gap +
             body_choice_gap + choice_slot_h + choices_footer_gap + footer_h;
@@ -148,23 +155,24 @@ namespace app {
 
         const float body_h = body_line_h + static_cast<float>(visible_lines - 1) * body_pitch;
         const float card_h = std::min(max_card_h, fixed_h + body_h);
-        const float rise = (1.0f - settle) * 18.0f;
         const float card_x = vis_cx - card_w * 0.5f;
-        const float card_y = std::clamp(vis_cy - card_h * 0.5f, vis_top + margin, vis_bottom - margin - card_h) + rise;
+        const float card_y = std::clamp(vis_cy - card_h * 0.5f - hint_reserve * 0.5f, vis_top + margin,
+            std::max(vis_top + margin, vis_bottom - hint_reserve - card_h));
 
-        c.glass(card_x, card_y, card_w, card_h, 40.0f, 1.0f, 0.90f);
+        c.glass(vis_cx - card_w * pose.scale * 0.5f, card_y + card_h * (1.0f - pose.scale) * 0.5f,
+            card_w * pose.scale, card_h * pose.scale);
 
         const float title_top = card_y + top_pad;
         for(std::size_t i = 0; i < title_lines.size(); ++i) {
             c.text(title_lines[i], vis_cx, title_top + title_metrics.x + static_cast<float>(i) * title_pitch,
-                28, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, true);
+                28, primary, 0.0f, true);
         }
 
         const float body_top = title_top + title_block_h + title_body_gap;
         const float body_bottom = body_top + body_h;
         for(std::size_t i = 0; i < visible_lines && i + scroll_line < line_count; ++i) {
             c.text(body_lines[i + scroll_line], vis_cx, body_top + body_metrics.x + static_cast<float>(i) * body_pitch,
-                24, {1.0f, 1.0f, 1.0f, 0.92f}, 0.0f, true);
+                24, primary, 0.0f, true);
         }
 
         if(line_count > visible_lines) {
@@ -182,15 +190,13 @@ namespace app {
                 static_cast<float>(choices.size() - 1) * choice_gap;
             const float row_x = vis_cx - total_row_w * 0.5f;
             const float slot_y = body_bottom + body_choice_gap;
+            // The focus capsule slides between choices.
+            focus.move_to({row_x + static_cast<float>(selected) * (choice_slot_w + choice_gap), slot_y, choice_slot_w, choice_slot_h}, now_ms);
+            const auto lit = focus.at(now_ms);
+            c.glass(lit.x, lit.y, lit.w, lit.h, glass::variant::focus, lit.h * 0.5f);
             for(std::size_t i = 0; i < choices.size(); ++i) {
                 const float sx = row_x + static_cast<float>(i) * (choice_slot_w + choice_gap);
-                const bool is_selected = (i == selected);
-                if(is_selected) {
-                    c.glass_focus(sx, slot_y, choice_slot_w, choice_slot_h, 1.0f);
-                }
-                const glm::vec4 col = is_selected
-                    ? glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)
-                    : glm::vec4(1.0f, 1.0f, 1.0f, 0.80f);
+                const glm::vec4 col = primary;
                 const auto& lines = choice_lines[i];
                 const float ch_h = choice_line_h + static_cast<float>(std::max<std::size_t>(1, lines.size()) - 1) * choice_pitch;
                 const float first_base = slot_y + (choice_slot_h - ch_h) * 0.5f + choice_metrics.x;
@@ -203,9 +209,7 @@ namespace app {
 
         const auto previous_scale = renderer.text_scale;
         renderer.text_scale = 1.0f;
-        const float hints_y = (c.oy + (card_y + card_h - footer_h * 0.5f - 4.0f) * c.scale) /
-            static_cast<float>(renderer.frame_size.height);
-        xmb->render_controller_buttons(renderer, 0.5f, hints_y, std::array{
+        xmb->render_hint_bar(renderer, std::array{
             std::pair{action::ok, "Enter"},
             std::pair{cancelable ? action::cancel : action::none, "Back"}
         });

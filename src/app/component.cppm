@@ -177,6 +177,10 @@ export class component {
     // True while this overlay hides the whole screen, so the wallpaper
     // behind it need not be drawn.
     virtual bool covers_scene() const { return false; }
+    // A screen that covers the scene paints its own backdrop; this is the
+    // colour (sRGB, 0..1) the background is cleared to under it, so glass on
+    // that screen shows what the screen shows. Only read when covers_scene().
+    virtual std::array<float, 3> backdrop_srgb() const { return {0.0F, 0.0F, 0.0F}; }
     virtual bool music_background() const { return false; }
       virtual bool music_reactive() const { return false; }
       virtual bool keeps_awake() const { return false; }

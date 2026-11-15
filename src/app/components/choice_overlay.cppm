@@ -22,6 +22,7 @@
  */
 
 module;
+#include "openxmb/xmb/glass.hpp"
 
 #include <chrono>
 #include <functional>
@@ -75,6 +76,7 @@ export class choice_overlay : public component, public action_receiver {
         unsigned int last_selection_index = 0;
         time_point last_selection_time = std::chrono::system_clock::now();
         steady_time_point opened_time = std::chrono::steady_clock::now();
+        openxmb::xmb::glass::focus_tracker focus;
 
         constexpr static auto open_duration = std::chrono::milliseconds(250);
         constexpr static auto transition_duration = std::chrono::milliseconds(100);

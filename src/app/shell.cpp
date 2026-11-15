@@ -17,6 +17,9 @@
  */
 
 module;
+#include "openxmb/xmb/pause_backdrop.hpp"
+#include "openxmb/xmb/child_process.hpp"
+#include <future>
 
 #include <array>
 #include <algorithm>
@@ -297,6 +300,66 @@ namespace app
         }
     }
 
+    // Capture the frozen game for the pause panel's glass. Until the panel
+    // opens, the menu's surface is transparent and empty, so the capture
+    // holds only the game.
+    void shell::start_pause_capture()
+    {
+        drop_pause_still();
+        pause_backdrop.start();
+        const char* runtime = std::getenv("XDG_RUNTIME_DIR");
+        const std::string path = std::string(runtime && *runtime ? runtime : "/tmp") + "/nova-pause-still.png";
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+        if (!pause_capture.spawn({"grim", "-t", "png", "-l", "0", path})) {
+            spdlog::warn("Pause: could not run grim; the panel uses its fallback glass");
+            pause_backdrop.finish(false);
+        }
+    }
+
+    void shell::poll_pause_capture()
+    {
+        openxmb::xmb::child_process::reap_orphans();
+        if (pause_capture.running()) {
+            if (const auto exited_ok = pause_capture.poll()) {
+                if (*exited_ok && pause_backdrop.state == openxmb::xmb::pause_backdrop_state::capturing) {
+                    const char* runtime = std::getenv("XDG_RUNTIME_DIR");
+                    const std::string path = std::string(runtime && *runtime ? runtime : "/tmp") + "/nova-pause-still.png";
+                    pause_still = std::make_unique<texture>(device, allocator);
+                    pause_still_loading = loader->loadTexture(pause_still.get(), path);
+                    pause_still_loading_started = true;
+                } else {
+                    pause_backdrop.finish(false);
+                }
+            }
+        }
+        if (pause_still_loading_started && pause_still_loading.valid() &&
+            pause_still_loading.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            pause_still_loading_started = false;
+            try {
+                pause_still_loading.get();
+                pause_backdrop.finish(pause_still && pause_still->loaded);
+            } catch (const std::exception& error) {
+                spdlog::warn("Pause: the captured still did not load: {}", error.what());
+                pause_backdrop.finish(false);
+            }
+        }
+    }
+
+    void shell::drop_pause_still()
+    {
+        pause_backdrop.cancel();
+        // Never wait for the capture here: it is let go and reaped later.
+        pause_capture.terminate();
+        if (pause_still_loading.valid()) pause_still_loading.wait();
+        pause_still_loading_started = false;
+        if (pause_still) {
+            // The frame that last sampled it may still be in flight.
+            device.waitIdle();
+            pause_still.reset();
+        }
+    }
+
     void shell::poll_pause_ipc()
     {
         auto open_pause = [this](const std::string& game_id) {
@@ -306,9 +369,17 @@ namespace app
                     return;
                 }
             }
-            emplace_overlay<app::pause_overlay>(game_id);
+            if (pending_pause_game) return;
+            pending_pause_game = game_id;
+            pause_requested_at = std::chrono::steady_clock::now();
+            start_pause_capture();
         };
         auto close_pause = [this]() {
+            if (pending_pause_game) {
+                // RESUME or QUIT before the panel opened: nothing to show.
+                pending_pause_game.reset();
+                drop_pause_still();
+            }
             for (unsigned int i = 0; i < overlays.size(); ++i) {
                 if (dynamic_cast<app::pause_overlay*>(overlays[i].get()) != nullptr) {
                     remove_overlay(i);
@@ -368,6 +439,16 @@ namespace app
                         ov->set_top_action("Power Menu");
                     }
                 }
+            }
+        }
+
+        poll_pause_capture();
+        if (pending_pause_game) {
+            const auto waited = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - pause_requested_at).count();
+            if (pause_backdrop.panel_may_show(waited)) {
+                const auto game_id = *pending_pause_game;
+                pending_pause_game.reset();
+                emplace_overlay<app::pause_overlay>(game_id);
             }
         }
 
@@ -675,6 +756,7 @@ namespace app
         backgroundResolve.clear();
         backgroundDepth.clear();
         blurFrames.clear();
+        glassBackdrops.clear();
 
         // recreateSwapchain has already idled the device. Retire framebuffers
         // first, then rebuild every pipeline against the matching render passes
@@ -747,6 +829,31 @@ namespace app
                 backgroundResolve.push_back(std::move(tex));
             }
             blurFrames.emplace_back();
+            {
+                // The glass backdrop: same format as the background, a mip
+                // chain filled by blits, sampled by glass panels.
+                auto& backdrop = glassBackdrops.emplace_back();
+                const auto format = win->swapchainFormat.format;
+                const auto features = win->physicalDevice.getFormatProperties(format).optimalTilingFeatures;
+                const auto needed = vk::FormatFeatureFlagBits::eBlitSrc | vk::FormatFeatureFlagBits::eBlitDst |
+                    vk::FormatFeatureFlagBits::eSampledImageFilterLinear;
+                if((features & needed) == needed) {
+                    vk::ImageCreateInfo info({}, vk::ImageType::e2D, format, vk::Extent3D(extent.width, extent.height, 1),
+                        glass_backdrop_levels, 1, vk::SampleCountFlagBits::e1, vk::ImageTiling::eOptimal,
+                        vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+                        vk::SharingMode::eExclusive, {}, vk::ImageLayout::eUndefined);
+                    vma::AllocationCreateInfo allocation({}, vma::MemoryUsage::eGpuOnly);
+                    auto [image, memory] = allocator.createImageUnique(info, allocation);
+                    backdrop.image = std::move(image);
+                    backdrop.allocation = std::move(memory);
+                    backdrop.view = device.createImageViewUnique(vk::ImageViewCreateInfo({}, backdrop.image.get(),
+                        vk::ImageViewType::e2D, format, {},
+                        vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, glass_backdrop_levels, 0, 1)));
+                    debugName(device, backdrop.image.get(), ("Glass Backdrop #"+std::to_string(i)).c_str());
+                } else if(i == 0) {
+                    spdlog::warn("Glass: the background format cannot be blitted; panels use their opaque fallback");
+                }
+            }
             {
                 if(win->config.sampleCount == vk::SampleCountFlagBits::e1) {
                     const std::array attachments{swapchainViews[i]};
@@ -853,6 +960,57 @@ namespace app
         device.updateDescriptorSets(writes, {});
     }
 
+    // Copy the rendered background into the glass backdrop and build its mip
+    // chain with linear blits. backgroundResolve leaves and returns to
+    // shader-read layout, so the blur path after this is unaffected.
+    void shell::build_glass_backdrop(vk::CommandBuffer commandBuffer, int frame) {
+        if(static_cast<std::size_t>(frame) >= glassBackdrops.size() || !glassBackdrops[static_cast<std::size_t>(frame)].image) return;
+        const vk::Image target = glassBackdrops[static_cast<std::size_t>(frame)].image.get();
+        const vk::Image source = backgroundResolve[static_cast<std::size_t>(frame)]->image;
+        const auto range = [](std::uint32_t level, std::uint32_t count) {
+            return vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, level, count, 0, 1);
+        };
+        const auto barrier = [&](vk::Image image, vk::ImageSubresourceRange subresource, vk::AccessFlags from_access, vk::AccessFlags to_access,
+                                 vk::ImageLayout from, vk::ImageLayout to, vk::PipelineStageFlags from_stage, vk::PipelineStageFlags to_stage) {
+            commandBuffer.pipelineBarrier(from_stage, to_stage, {}, {}, {},
+                vk::ImageMemoryBarrier(from_access, to_access, from, to, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, image, subresource));
+        };
+        const auto size = [](std::uint32_t extent, std::uint32_t level) {
+            return static_cast<std::int32_t>(std::max(1u, extent >> level));
+        };
+        const auto width = win->swapchainExtent.width, height = win->swapchainExtent.height;
+        barrier(source, range(0, 1), vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eShaderRead, vk::AccessFlagBits::eTransferRead,
+            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eTransferSrcOptimal,
+            vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eFragmentShader, vk::PipelineStageFlagBits::eTransfer);
+        barrier(target, range(0, glass_backdrop_levels), vk::AccessFlagBits::eShaderRead, vk::AccessFlagBits::eTransferWrite,
+            vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+            vk::PipelineStageFlagBits::eFragmentShader, vk::PipelineStageFlagBits::eTransfer);
+        const auto blit = [&](vk::Image from, std::uint32_t from_level, std::uint32_t to_level) {
+            const vk::ImageBlit region(
+                vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, from_level, 0, 1),
+                {vk::Offset3D{0, 0, 0}, vk::Offset3D{size(width, from_level), size(height, from_level), 1}},
+                vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, to_level, 0, 1),
+                {vk::Offset3D{0, 0, 0}, vk::Offset3D{size(width, to_level), size(height, to_level), 1}});
+            commandBuffer.blitImage(from, vk::ImageLayout::eTransferSrcOptimal, target, vk::ImageLayout::eTransferDstOptimal, region, vk::Filter::eLinear);
+        };
+        blit(source, 0, 0);
+        for(std::uint32_t level = 1; level < glass_backdrop_levels; ++level) {
+            barrier(target, range(level - 1, 1), vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eTransferRead,
+                vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal,
+                vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer);
+            blit(target, level - 1, level);
+        }
+        barrier(target, range(0, glass_backdrop_levels - 1), vk::AccessFlagBits::eTransferRead, vk::AccessFlagBits::eShaderRead,
+            vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+            vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader);
+        barrier(target, range(glass_backdrop_levels - 1, 1), vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eShaderRead,
+            vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+            vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader);
+        barrier(source, range(0, 1), vk::AccessFlagBits::eTransferRead, vk::AccessFlagBits::eShaderRead,
+            vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+            vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader);
+    }
+
     void shell::reload_language() {
         try {
             const std::string& lang = config::CONFIG.language;
@@ -911,6 +1069,13 @@ namespace app
         }
         const bool retiring_pause_overlay = is_retiring_pause_overlay(old_overlay);
         const bool overlay_ingame = ingame_mode || has_pause_overlay() || retiring_pause_overlay || game_has_screen;
+        // The paused game's still goes once its panel has fully gone.
+        if(!pending_pause_game && !has_pause_overlay() && !retiring_pause_overlay &&
+           pause_backdrop.state != openxmb::xmb::pause_backdrop_state::idle && pause_backdrop.state != openxmb::xmb::pause_backdrop_state::capturing)
+            drop_pause_still();
+        // While paused, the menu draws the frozen game's still as its
+        // background so the glass and the frame show the same picture.
+        const bool still_backdrop = overlay_ingame && pause_still_drawn() && (has_pause_overlay() || retiring_pause_overlay);
         if (win) {
             win->config.transparentSurface = overlay_ingame;
         }
@@ -991,6 +1156,13 @@ namespace app
             if(overlay_ingame) {
                 color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f});
             }
+            for(const auto& overlay : std::views::reverse(overlays)) {
+                if(!overlay_ingame && overlay->covers_scene()) {
+                    const auto c = overlay->backdrop_srgb();
+                    color = vk::ClearColorValue(std::array<float, 4>{c[0], c[1], c[2], 1.0f});
+                    break;
+                }
+            }
             std::array<vk::ClearValue, 3> background_clears{color, color, color};
             const auto depth_index = win->config.sampleCount == vk::SampleCountFlagBits::e1 ? 1u : 2u;
             background_clears[depth_index] = vk::ClearDepthStencilValue(1.0F, 0);
@@ -1009,6 +1181,9 @@ namespace app
             // A loading screen that covers everything: skip the wallpaper, so
             // the starting game gets the processor and the GPU.
             const bool scene_covered=std::any_of(overlays.begin(),overlays.end(),[](const auto& overlay){return overlay->covers_scene();});
+            if(still_backdrop)
+                image_render->renderImageSized(commandBuffer,frame,backgroundRenderPass.get(),*pause_still,0,0,
+                    static_cast<int>(win->swapchainExtent.width),static_cast<int>(win->swapchainExtent.height));
             if(!overlay_ingame&&!scene_covered) {
                 if(music_scene||music_mix>0.001F||config::CONFIG.backgroundType == config::config::background_type::original) {
                     if(can_render_monthly_background) {
@@ -1076,6 +1251,7 @@ namespace app
             commandBuffer.endRenderPass();
             image_render->setOutputEncoded(false);
         }
+        build_glass_backdrop(commandBuffer, frame);
         double blur_background_progress = utils::progress(now, last_blur_background_change, blur_background_transition_duration);
         const auto startup_blur_radius = std::max(0.0f, startup_background_blur_px);
         const bool use_startup_blur_background = startup_blur_radius > 0.05f;
@@ -1604,6 +1780,10 @@ namespace app
             if(!overlay_ingame) {
                 image_render->renderImageSized(commandBuffer, frame, shellRenderPass.get(), compositedBackgroundView,
                     0.0f, 0.0f, static_cast<int>(win->swapchainExtent.width), static_cast<int>(win->swapchainExtent.height),glm::vec4(brightness,brightness,brightness,1.0F));
+            } else if(still_backdrop) {
+                // The game's own frame: no menu brightness on top of it.
+                image_render->renderImageSized(commandBuffer, frame, shellRenderPass.get(), compositedBackgroundView,
+                    0.0f, 0.0f, static_cast<int>(win->swapchainExtent.width), static_cast<int>(win->swapchainExtent.height));
             }
             gui_renderer ctx(commandBuffer, frame, shellRenderPass.get(), win->swapchainExtent, font_render.get(), image_render.get(), simple_render.get());
             if(!overlay_ingame && menu_dim_alpha > 0.001F) {
@@ -1611,6 +1791,12 @@ namespace app
                     glm::vec4{0.0F, 0.0F, 0.0F, menu_dim_alpha});
             }
             image_render->setGlassBackground(compositedBackgroundView);
+            {
+                const auto index = static_cast<std::size_t>(frame);
+                const bool has_backdrop = index < glassBackdrops.size() && glassBackdrops[index].view && (!overlay_ingame || still_backdrop);
+                image_render->setGlassBackdrop(has_backdrop ? glassBackdrops[index].view.get() : vk::ImageView{},
+                    has_backdrop ? glass_backdrop_levels : 0u);
+            }
             image_render->setGlassMaterial(
                 iconGlassAmbientTexture && iconGlassAmbientTexture->loaded
                     ? iconGlassAmbientTexture->imageView.get()
@@ -1636,6 +1822,7 @@ namespace app
             }
             if(!background_only) {
                 render_gui(ctx);
+                flush_hint_bar(ctx);
             }
 
             commandBuffer.endRenderPass();
@@ -1761,7 +1948,9 @@ namespace app
            old_overlay && old_overlay->do_fade_out()) {
             renderer.push_color(glm::mix(glm::vec4(0.0), glm::vec4(1.0), dir_progress));
             renderer.text_scale = static_cast<float>(config::CONFIG.textScale) * old_overlay->typography_scale();
+            hint_bar_locked = true;
             old_overlay->render(renderer, this);
+            hint_bar_locked = false;
             renderer.pop_color();
         } else if(old_overlay) {
             // Fade-out finished; if it was a message or pause overlay, drop background blur now

@@ -17,6 +17,7 @@
  */
 
 module;
+#include "openxmb/xmb/glass.hpp"
 #include "../../localization/ui_literal_text.hpp"
 
 #include "openxmb/xmb/catalog.hpp"
@@ -1807,16 +1808,27 @@ void main_menu::render(auroreengine::gui_renderer& renderer) {
     menus[selected]->get_button_actions(buttons);
     if((in_submenu_now&&current_submenu)||outgoing_media)render_submenu(renderer,now);
     if(in_submenu_now&&current_submenu)current_submenu->get_button_actions(buttons);
-    if(in_submenu_now) {
-        xmb->render_controller_buttons(renderer, 0.5f, (config::CONFIG.ui_scale() > 1.0) ? 0.955f : 0.9f, buttons);
-    }
+    // One hint bar on every screen that takes input.
     if(move_mode) {
         render_move_hint(renderer, now);
-    } else if(!in_submenu_now && !settings_category_active() &&
+        const std::vector<std::pair<action, std::string>> done{{action::ok, "Done"_()}};
+        xmb->render_hint_bar(renderer, done);
+    } else if(in_submenu_now) {
+        xmb->render_hint_bar(renderer, buttons);
+    } else if(!settings_category_active() &&
               dynamic_cast<menu::library_menu*>(menus[static_cast<std::size_t>(selected)].get()) != nullptr) {
         const std::vector<std::pair<action, std::string>> library_buttons{
             {action::ok, "Start"_()}, {action::options, "Options"_()}};
-        xmb->render_controller_buttons(renderer, 0.5f, (config::CONFIG.ui_scale() > 1.0) ? 0.945f : 0.9f, library_buttons, true);
+        xmb->render_hint_bar(renderer, library_buttons);
+    } else if(settings_category_active() && settings_controller &&
+              settings_controller->route().id != "category.settings") {
+        // Inside a Settings group: Back leads out of it.
+        const std::vector<std::pair<action, std::string>> settings_buttons{
+            {action::ok, "Select"_()}, {action::cancel, "Back"_()}};
+        xmb->render_hint_bar(renderer, settings_buttons);
+    } else {
+        const std::vector<std::pair<action, std::string>> select{{action::ok, "Select"_()}};
+        xmb->render_hint_bar(renderer, select);
     }
 }
 
@@ -1958,6 +1970,17 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
                                       double alpha_multiplier) {
         const auto eased = ease_out_cubic(transition);
         const auto count = static_cast<int>(menu.get_submenus_count());
+        // A column with any wide logo keeps the wide row box; a column of
+        // square icons uses a square one, so labels sit close to them.
+        bool wide_art = false;
+        for(int index = 0; index < count && !wide_art; ++index) {
+            const auto& candidate = menu.get_submenu(static_cast<unsigned int>(index));
+            const auto& texture = candidate.get_icon();
+            wide_art = candidate.has_custom_icon() && texture.height > 0 &&
+                static_cast<double>(texture.width) > 1.2 * static_cast<double>(texture.height);
+        }
+        using lens = openxmb::xmb::SelectionLens;
+        const double column_label_shift = lens::label_shift_for(SettingsSceneMetrics::focused_icon_extent, wide_art);
         constexpr double kZoomedSelectedItemYFrac = 0.50;
         const auto focus_y_shift = (config::CONFIG.ui_scale() > 1.0)
             ? (((layout.framebuffer_height * kZoomedSelectedItemYFrac - layout.offset_y) / layout.scale) - SettingsSceneMetrics::focus_y)
@@ -1991,25 +2014,30 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
             if(focused && config::CONFIG.console_mode()) {
                 // The focused row rests on a lens of clear glass; while it is
                 // being moved, on a lit capsule. Same shape in every column.
-                using lens = openxmb::xmb::SelectionLens;
-                const double label_left = SettingsSceneMetrics::label_x + lens::label_shift + x_shift;
+                const double label_left = SettingsSceneMetrics::label_x + column_label_shift + x_shift;
                 double text_right = label_left + renderer.text_width_pixels(entry.get_name(),
                     static_cast<float>(SettingsSceneMetrics::active_label_size * layout.scale)) / layout.scale;
                 if(!entry.get_description().empty())
                     text_right = std::max(text_right, label_left + renderer.text_width_pixels(entry.get_description(),
                         static_cast<float>(SettingsSceneMetrics::description_size * layout.scale)) / layout.scale);
-                const auto left = lens::left(SettingsSceneMetrics::icon_center_x + x_shift, extent);
-                const auto right = text_right + lens::right_padding;
                 const auto height = lens::height(extent);
-                const bool grabbed = move_mode && &menu == menus[static_cast<std::size_t>(selected)].get();
-                // The lens settles in as the selection arrives.
-                const auto lens_alpha = static_cast<float>(alpha * (grabbed ? 1.0 : eased));
-                if(grabbed)
-                    canvas.glass_focus(static_cast<float>(left), static_cast<float>(center_y - height * 0.5),
-                        static_cast<float>(right - left), static_cast<float>(height), lens_alpha, static_cast<float>(openxmb::xmb::SelectionLens::radius));
-                else
-                    canvas.glass_clear(static_cast<float>(left), static_cast<float>(center_y - height * 0.5),
-                        static_cast<float>(right - left), static_cast<float>(height), static_cast<float>(openxmb::xmb::SelectionLens::radius), lens_alpha);
+                const bool current_column = &menu == menus[static_cast<std::size_t>(selected)].get();
+                const bool grabbed = move_mode && current_column;
+                auto left = lens::left(SettingsSceneMetrics::icon_center_x + x_shift, extent, wide_art);
+                auto right = text_right + lens::right_padding;
+                if(current_column) {
+                    // The lens stays lit across moves; only its width eases.
+                    const float now_ms = static_cast<float>(std::chrono::duration<double, std::milli>(now.time_since_epoch()).count());
+                    lens_focus.move_to({static_cast<float>(left), 0.0F, static_cast<float>(right - left), 0.0F}, now_ms);
+                    const auto at = lens_focus.at(now_ms);
+                    left = at.x;
+                    right = at.x + at.w;
+                }
+                const auto lens_alpha = static_cast<float>(alpha);
+                canvas.glass(static_cast<float>(left), static_cast<float>(center_y - height * 0.5),
+                    static_cast<float>(right - left), static_cast<float>(height),
+                    grabbed ? openxmb::xmb::glass::variant::focus : openxmb::xmb::glass::variant::clear,
+                    static_cast<float>(openxmb::xmb::SelectionLens::radius), lens_alpha);
             }
             // On the console a square icon is fitted to the same box as a
             // logo: its height is the box's height.
@@ -2021,8 +2049,8 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
 
             const auto& icon_tex = entry.get_icon();
             // Covers are cards wider than an icon; their labels move right.
-            const double wide_label_shift = (entry.has_custom_icon() || config::CONFIG.console_mode())
-                ? openxmb::xmb::SelectionLens::label_shift : 0.0;
+            const double wide_label_shift = config::CONFIG.console_mode() ? column_label_shift
+                : (entry.has_custom_icon() ? openxmb::xmb::SelectionLens::label_shift : 0.0);
             const auto label_size = focused ? SettingsSceneMetrics::active_label_size : SettingsSceneMetrics::inactive_label_size;
             const auto text_value = focused ? 1.0f : 235.0f / 255.0f;
             const float item_pulse = 0.8F + 0.4F * std::sin(static_cast<float>(seconds_from_time_point(now)) * 1.848F);
@@ -2076,27 +2104,30 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
 }
 
 void main_menu::render_move_hint(auroreengine::gui_renderer& renderer, time_point now) {
+    namespace glass=openxmb::xmb::glass;
     const auto* column=dynamic_cast<menu::library_menu*>(menus[static_cast<std::size_t>(selected)].get());
     if(column==nullptr) return;
     const overlay_canvas canvas(renderer);
-    const auto reveal=static_cast<float>(ease_out_cubic(progress(now,move_started,std::chrono::milliseconds(200))));
+    const auto pose=glass::panel_in(static_cast<float>(std::chrono::duration<double,std::milli>(now-move_started).count()));
     const float center=(canvas.visible_left()+canvas.visible_right())*0.5F;
-    const float width=std::min(900.0F,canvas.visible_right()-canvas.visible_left()-72.0F);
-    constexpr float height=122.0F;
-    const float top=canvas.visible_bottom()-height-34.0F+(1.0F-reveal)*26.0F;
-    canvas.glass(center-width*0.5F,top,width,height,36.0F,reveal);
-    canvas.text(std::string("Moving ")+column->selected_title(),center,top+50.0F,30,{1,1,1,reveal},0,true);
-    // Arrowheads and words, then the confirm button, on one centred line.
+    const float width=std::min(896.0F,canvas.visible_right()-canvas.visible_left()-72.0F);
+    constexpr float height=120.0F,hint_reserve=112.0F;
+    // A card just above the hint bar, which carries "Done".
+    const float top=canvas.visible_bottom()-hint_reserve-height;
+    canvas.glass(center-width*pose.scale*0.5F,top+height*(1.0F-pose.scale)*0.5F,width*pose.scale,height*pose.scale,
+        glass::variant::regular,glass::card_radius,pose.alpha);
+    canvas.text(std::string("Moving ")+column->selected_title(),center,top+48.0F,30,{1,1,1,glass::text_primary*pose.alpha},0,true);
+    // Arrowheads and words on one centred line.
     using direction=xmb_canvas::arrow_direction;
     const auto measure=[&](const std::string& text) {
         return renderer.text_width_pixels(text,22.0F*canvas.scale*static_cast<float>(config::CONFIG.textScale))/canvas.scale;
     };
     const std::string reorder="Reorder",change="Change column";
-    constexpr float arrows=38.0F,gap=44.0F,button=150.0F;
-    const float total=arrows+measure(reorder)+gap+arrows+measure(change)+gap+button;
+    constexpr float arrows=40.0F,gap=48.0F;
+    const float total=arrows+measure(reorder)+gap+arrows+measure(change);
     float cursor=center-total*0.5F;
-    const float line=top+94.0F,middle=line-8.0F;
-    const glm::vec4 ink{1,1,1,0.85F*reveal};
+    const float line=top+88.0F,middle=line-8.0F;
+    const glm::vec4 ink{1,1,1,glass::text_secondary*pose.alpha};
     canvas.arrow(cursor+8.0F,middle-7.0F,12.0F,direction::up,ink);
     canvas.arrow(cursor+8.0F,middle+7.0F,12.0F,direction::down,ink);
     cursor+=arrows;
@@ -2106,13 +2137,6 @@ void main_menu::render_move_hint(auroreengine::gui_renderer& renderer, time_poin
     canvas.arrow(cursor+20.0F,middle,12.0F,direction::right,ink);
     cursor+=arrows;
     canvas.text(change,cursor,line,22,ink);
-    cursor+=measure(change)+gap;
-    renderer.push_color({1,1,1,reveal});
-    const std::vector<std::pair<action, std::string>> done{{action::ok, "Done"_()}};
-    xmb->render_controller_buttons(renderer,
-        (canvas.ox+(cursor+button*0.5F)*canvas.scale)/static_cast<float>(renderer.frame_size.width),
-        (canvas.oy+middle*canvas.scale)/static_cast<float>(renderer.frame_size.height),done);
-    renderer.pop_color();
 }
 
 void main_menu::finish_media_transition() {

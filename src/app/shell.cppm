@@ -23,6 +23,11 @@
 
 module;
 #include "input_timing.hpp"
+#include "openxmb/xmb/pause_backdrop.hpp"
+#include "openxmb/xmb/child_process.hpp"
+#include <future>
+#include <optional>
+#include "openxmb/xmb/glass.hpp"
 #include "../localization/shell_locale.hpp"
 
 #include <array>
@@ -62,6 +67,7 @@ import :news_display;
 import :pause_overlay;
 import :progress_overlay;
 import :startup_overlay;
+import :xmb_presentation;
 
 namespace app
 {
@@ -128,6 +134,79 @@ namespace app
             std::string get_controller_type() const;
             const texture* get_button_icon(action value) const { return buttonTextures[std::to_underlying(value)].get(); }
             std::string get_button_label(action value) const { return button_labels[std::to_underlying(value)]; }
+            // The console's one hint bar: a glass capsule centred at the
+            // bottom of every screen that takes input, in the overlay canvas
+            // so it sits in the same place at every scale. Hints are never
+            // drawn inside cards.
+            // Screens ask for their hints; the shell draws one bar per frame,
+            // after everything else, with the topmost screen's hints. A
+            // screen that is fading out does not replace a live one's.
+            void render_hint_bar(gui_renderer& renderer, std::ranges::range auto buttons) {
+                if(hint_bar_locked&&hint_bar_requested) return;
+                hint_bar_buttons.clear();
+                for(const auto& [a,text]:buttons) hint_bar_buttons.emplace_back(a,std::string(text));
+                hint_bar_colour=renderer.current_color();
+                hint_bar_requested=true;
+            }
+            std::vector<std::pair<action,std::string>> hint_bar_buttons;
+            glm::vec4 hint_bar_colour{1.0F};
+            bool hint_bar_requested=false,hint_bar_locked=false;
+            void flush_hint_bar(gui_renderer& renderer) {
+                if(!hint_bar_requested) return;
+                hint_bar_requested=false;hint_bar_locked=false;
+                const auto previous_scale=renderer.text_scale;
+                renderer.text_scale=1.0F;
+                renderer.push_color_direct(hint_bar_colour);
+                draw_hint_bar(renderer,hint_bar_buttons);
+                renderer.pop_color();
+                renderer.text_scale=previous_scale;
+            }
+            void draw_hint_bar(gui_renderer& renderer, const std::vector<std::pair<action,std::string>>& buttons) {
+                namespace glass=openxmb::xmb::glass;
+                const overlay_canvas c(renderer);
+                const float fw=static_cast<float>(renderer.frame_size.width),fh=static_cast<float>(renderer.frame_size.height);
+                const float s=c.scale;
+                const float font=24.0F*s,key_font=17.0F*s,cap=32.0F*s,gap=10.0F*s,spacing=40.0F*s;
+                const auto label=[&](action a){return button_labels[std::to_underlying(a)];};
+                const auto glyph_width=[&](action a){const auto& l=label(a);return l.empty()?cap:std::max(cap,renderer.text_width_pixels(l,key_font)+12*s);};
+                float total=0;
+                for(const auto& [a,text]:buttons) if(a!=action::none)
+                    total+=glyph_width(a)+gap+renderer.text_width_pixels(::openxmb::localization::shell_locale::translate(text),font)+spacing;
+                if(total<=0) return;
+                total-=spacing;
+                const float bar_h=54.0F*s,pad_x=24.0F*s;
+                const float bar_w=total+2*pad_x;
+                const float bar_y=c.oy+(c.visible_bottom()-28.0F)*s-bar_h;
+                const float bar_x=fw*0.5F-bar_w*0.5F;
+                const float cy=bar_y+bar_h*0.5F;
+                c.glass((bar_x-c.ox)/s,(bar_y-c.oy)/s,bar_w/s,bar_h/s,glass::variant::regular,bar_h/s*0.5F);
+                const auto metrics=renderer.text_line_metrics_pixels(font),key_metrics=renderer.text_line_metrics_pixels(key_font);
+                const auto ring=[&](float px,float py,float pw,float ph) {
+                    // A white ring with no fill: a lit glass capsule whose
+                    // rim is white, so the bar shows through the key cap.
+                    renderer.draw_glass_panel({px/fw,py/fh},{pw/fw,ph/fh},{1,1,1,0.85F},
+                        xmb_canvas::panel_params(glass::variant::focus,pw,ph,ph*0.5F,1));
+                };
+                float current=bar_x+pad_x;
+                for(const auto& [a,text]:buttons) {
+                    if(a==action::none) continue;
+                    const auto i=std::to_underlying(a);const auto width=glyph_width(a);
+                    if(!button_labels[i].empty()) {
+                        ring(current,cy-cap*0.5F,width,cap);
+                        renderer.draw_text_pixels(button_labels[i],current+width*0.5F,cy+(key_metrics.x-key_metrics.y)*0.5F,key_font,{1,1,1,1},0.7F,0,true);
+                    } else if(auto* icon=buttonTextures[i].get(); icon!=nullptr&&icon->loaded) {
+                        float draw_w=cap,draw_h=cap;
+                        if(icon->width>0&&icon->height>0) {
+                            const float fit=std::min(cap/static_cast<float>(icon->width),cap/static_cast<float>(icon->height));
+                            draw_w=static_cast<float>(icon->width)*fit;draw_h=static_cast<float>(icon->height)*fit;
+                        }
+                        renderer.draw_image(*icon,(current+(width-draw_w)*0.5F)/fw,cy/fh-draw_h/(2*fh),draw_w/fh,draw_h/fh);
+                    }
+                    const auto translated=::openxmb::localization::shell_locale::translate(text);
+                    renderer.draw_text_pixels(translated,current+width+gap,cy+(metrics.x-metrics.y)*0.5F,font,{1,1,1,glass::text_primary},0.7F,0,false);
+                    current+=width+gap+renderer.text_width_pixels(translated,font)+spacing;
+                }
+            }
             // `plate` draws the hints on a glass capsule, for hints that sit
             // directly on the wallpaper rather than inside a panel.
             void render_controller_buttons(gui_renderer& renderer, float x, float y, std::ranges::range auto buttons, bool plate=false) {
@@ -354,6 +433,17 @@ namespace app
                 vk::DescriptorSet upsample2Set{};
             };
 
+            // What glass panels sample: a copy of the scene behind the
+            // interface with a mip chain, rebuilt each frame (see
+            // build_glass_backdrop). Empty when the format cannot be blitted.
+            static constexpr std::uint32_t glass_backdrop_levels = 6;
+            struct glass_backdrop_resources {
+                vma::UniqueImage image;
+                vma::UniqueAllocation allocation;
+                vk::UniqueImageView view;
+            };
+            std::vector<glass_backdrop_resources> glassBackdrops;
+            void build_glass_backdrop(vk::CommandBuffer commandBuffer, int frame);
             std::vector<vk::Image> swapchainImages;
             std::vector<std::unique_ptr<texture>> renderImages;
             std::vector<blur_frame_resources> blurFrames;
@@ -447,6 +537,20 @@ namespace app
 
             void poll_pause_ipc();
             int pause_sock_fd = -1;
+            // The still of the paused game that the pause panel's glass sits
+            // on (see openxmb/xmb/pause_backdrop.hpp). PAUSE starts a capture;
+            // the panel opens when it is ready, failed, or after 250 ms.
+            openxmb::xmb::pause_backdrop pause_backdrop;
+            std::optional<std::string> pending_pause_game;
+            std::chrono::steady_clock::time_point pause_requested_at;
+            openxmb::xmb::child_process pause_capture;
+            std::unique_ptr<texture> pause_still;
+            std::future<void> pause_still_loading;
+            bool pause_still_loading_started = false;
+            void start_pause_capture();
+            void poll_pause_capture();
+            void drop_pause_still();
+            [[nodiscard]] bool pause_still_drawn() const { return pause_backdrop.draw_still() && pause_still && pause_still->loaded; }
             std::string pause_sock_path;
 
             std::optional<clipboard> clipboard;

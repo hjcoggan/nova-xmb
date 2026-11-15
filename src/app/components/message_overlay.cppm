@@ -22,6 +22,7 @@
  */
 
 module;
+#include "openxmb/xmb/glass.hpp"
 
 #include <functional>
 #include <string>
@@ -68,6 +69,7 @@ export class message_overlay : public component, public action_receiver {
         std::vector<std::vector<std::string>> choice_lines;
         using time_point = std::chrono::time_point<std::chrono::steady_clock>;
         time_point start_time { std::chrono::steady_clock::now() };
+        openxmb::xmb::glass::focus_tracker focus;
 };
 
 }

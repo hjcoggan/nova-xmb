@@ -78,7 +78,7 @@ public:
             c.rect(caret,caret_top,6,2,{0.43F,0.81F,0.18F,1});c.rect(caret,caret_top+caret_height,6,2,{0.43F,0.81F,0.18F,1});
         }
         c.rect(box_x+8,388,box_w-16,14,grey(0.61F));
-        if(!config::CONFIG.enabled("input.osk")) {shell->render_controller_buttons(r,0.5F,0.78F,std::array{std::pair{action::options,"Save"},std::pair{action::extra,"Delete"},std::pair{action::cancel,"Back"}});return;}
+        if(!config::CONFIG.enabled("input.osk")) {shell->render_hint_bar(r,std::array{std::pair{action::options,"Save"},std::pair{action::extra,"Delete"},std::pair{action::cancel,"Back"}});return;}
         gradient(402,388,0.61F,0.38F);
         // OSK grid: key height 54 and the 7 px gaps are element sizes; the key
         // width and pitch compress together so the 10-column grid tracks the
@@ -106,7 +106,7 @@ public:
             if(focused) c.rect(x+5,718,action_w-10,1,{1,1,1,1});
         }
         c.rect(box_x+8,790,box_w-16,76,grey(0.38F));
-        shell->render_controller_buttons(r,0.5F,0.83F,std::array{std::pair{action::options,"Save"},std::pair{action::extra,"Delete"},std::pair{action::cancel,"Back"}});
+        shell->render_hint_bar(r,std::array{std::pair{action::options,"Save"},std::pair{action::extra,"Delete"},std::pair{action::cancel,"Back"}});
     }
     bool is_opaque() const override { return false; }
 private:

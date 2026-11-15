@@ -19,6 +19,7 @@
 module;
 
 #include "openxmb/xmb/catalog.hpp"
+#include "openxmb/xmb/glass.hpp"
 #include "openxmb/xmb/settings_actions.hpp"
 #include "openxmb/xmb/settings_scene.hpp"
 #include "openxmb/xmb/settings_controller.hpp"
@@ -120,6 +121,8 @@ class main_menu : public action_receiver {
 
         bool move_mode = false;
         time_point move_started;
+        // The crossbar lens eases its width when the focused label changes.
+        openxmb::xmb::glass::focus_tracker lens_focus;
 
         bool in_submenu = false;
         menu::menu* current_submenu = nullptr;

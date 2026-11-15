@@ -6,6 +6,7 @@ module;
 #include <optional>
 #include <string>
 #include <vector>
+#include "openxmb/xmb/glass.hpp"
 
 export module openxmb.app:pause_overlay;
 
@@ -46,6 +47,7 @@ export class pause_overlay : public component, public action_receiver {
         std::vector<std::string> guide_lines;
         std::chrono::steady_clock::time_point start_time = std::chrono::steady_clock::now();
         std::optional<std::chrono::steady_clock::time_point> closing_since;
+        openxmb::xmb::glass::focus_tracker focus;
 
         void refresh_levels();
 };
