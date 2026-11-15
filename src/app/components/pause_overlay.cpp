@@ -15,12 +15,14 @@ module;
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
-#include <unistd.h>
 #include <utility>
 #include <vector>
 
+#ifndef _WIN32
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 module openxmb.app;
 
@@ -67,6 +69,9 @@ int read_int_file(const std::filesystem::path& path, int fallback) {
 }
 
 int read_volume_pct() {
+#ifdef _WIN32
+    return 50;
+#else
     FILE* pipe = popen("wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null", "r");
     if (!pipe) {
         return 50;
@@ -82,10 +87,17 @@ int read_volume_pct() {
         return std::clamp(static_cast<int>(std::lround(vol * 100.0f)), 0, 100);
     }
     return 50;
+#endif
 }
 
 void spawn_detached(const char* prog, const char* arg1, const char* arg2,
                     const char* arg3 = nullptr) {
+#ifdef _WIN32
+    (void)prog;
+    (void)arg1;
+    (void)arg2;
+    (void)arg3;
+#else
     const pid_t pid = fork();
     if (pid == 0) {
         if (fork() == 0) {
@@ -108,6 +120,7 @@ void spawn_detached(const char* prog, const char* arg1, const char* arg2,
         int status = 0;
         while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
     }
+#endif
 }
 
 void write_volume_pct(int pct) {
@@ -262,10 +275,17 @@ void pause_overlay::refresh_levels() {
 // Rows, top to bottom. Quit is last, away from Resume.
 namespace {
 constexpr int row_resume = 0;
+#ifdef _WIN32
+constexpr int row_volume = -1;
+constexpr int row_brightness = -2;
+constexpr int row_quit = 1;
+constexpr int row_count = 2;
+#else
 constexpr int row_volume = 1;
 constexpr int row_brightness = 2;
 constexpr int row_quit = 3;
 constexpr int row_count = 4;
+#endif
 }
 
 void pause_overlay::begin_closing() {
@@ -361,7 +381,11 @@ void pause_overlay::render(auroreengine::gui_renderer& renderer, shell* xmb) {
     const auto lit = focus.at(now_ms);
     c.glass(lit.x, lit.y, lit.w, lit.h, glass::variant::focus, lit.h * 0.5f);
 
+#ifdef _WIN32
+    const std::array<std::string, row_count> labels = {"Resume", "Quit Game"};
+#else
     const std::array<std::string, row_count> labels = {"Resume", "Volume", "Brightness", "Quit Game"};
+#endif
     for (int i = 0; i < row_count; ++i) {
         const float y = rows_y + static_cast<float>(i) * (row_h + row_gap);
         const bool focused = i == selected;
