@@ -91,18 +91,12 @@ class mapped_memory {
         mapped_memory(const mapped_memory&) = delete;
         mapped_memory(mapped_memory&& other) noexcept :
             m_fd(std::exchange(other.m_fd, -1)), m_size(std::exchange(other.m_size, 0)), m_data(std::exchange(other.m_data, nullptr)) {}
-        ~mapped_memory() {
-            if(m_data != nullptr) {
-                munmap(m_data, m_size);
-            }
-            if(m_fd >= 0) {
-                close(m_fd);
-            }
-        }
+        ~mapped_memory() { release(); }
 
         mapped_memory& operator=(const mapped_memory&) = delete;
         mapped_memory& operator=(mapped_memory&& other) noexcept {
             if(this != &other) {
+                release();
                 m_fd = std::exchange(other.m_fd, -1);
                 m_size = std::exchange(other.m_size, 0);
                 m_data = std::exchange(other.m_data, nullptr);
@@ -124,6 +118,18 @@ class mapped_memory {
             return std::span<const T>(static_cast<const T*>(m_data), m_size / sizeof(T));
         }
     private:
+        void release() noexcept {
+            if(m_data != nullptr) {
+                munmap(m_data, m_size);
+                m_data = nullptr;
+            }
+            if(m_fd >= 0) {
+                close(m_fd);
+                m_fd = -1;
+            }
+            m_size = 0;
+        }
+
         int m_fd = -1;
         std::size_t m_size = 0;
         void* m_data = nullptr;
