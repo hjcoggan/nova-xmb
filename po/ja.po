@@ -5071,3 +5071,36 @@ msgstr "取り込み用フォルダー"
 
 msgid "Preset:"
 msgstr "プリセット:"
+
+msgid "Set the date, clock and time zone."
+msgstr "日付、時刻、タイムゾーンを設定します。"
+
+msgid "Adjust the screen and menu display."
+msgstr "画面とメニューの表示を調整します。"
+
+msgid "Manage wireless connections."
+msgstr "ワイヤレス接続を管理します。"
+
+msgid "Reduce power use when idle."
+msgstr "アイドル時の電力消費を抑えます。"
+
+msgid "Adjust sound and volume."
+msgstr "サウンドと音量を調整します。"
+
+msgid "Change system settings."
+msgstr "システム設定を変更します。"
+
+msgid "Update the system software."
+msgstr "システムソフトウェアを更新します。"
+
+msgid "Choose the menu background."
+msgstr "メニューの背景を選択します。"
+
+msgid "Choose the menu colour."
+msgstr "メニューの色を選択します。"
+
+msgid "Set menu lighting by time of day."
+msgstr "時刻に応じてメニューの明るさを設定します。"
+
+msgid "Change the menu appearance."
+msgstr "メニューの外観を変更します。"

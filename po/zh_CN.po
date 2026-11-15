@@ -5071,3 +5071,36 @@ msgstr "待导入项目"
 
 msgid "Preset:"
 msgstr "预设："
+
+msgid "Set the date, clock and time zone."
+msgstr "设置日期、时间和时区。"
+
+msgid "Adjust the screen and menu display."
+msgstr "调整屏幕和菜单显示。"
+
+msgid "Manage wireless connections."
+msgstr "管理无线连接。"
+
+msgid "Reduce power use when idle."
+msgstr "减少空闲时的电量消耗。"
+
+msgid "Adjust sound and volume."
+msgstr "调整声音和音量。"
+
+msgid "Change system settings."
+msgstr "更改系统设置。"
+
+msgid "Update the system software."
+msgstr "更新系统软件。"
+
+msgid "Choose the menu background."
+msgstr "选择菜单背景。"
+
+msgid "Choose the menu colour."
+msgstr "选择菜单颜色。"
+
+msgid "Set menu lighting by time of day."
+msgstr "根据一天中的时间设置菜单照明。"
+
+msgid "Change the menu appearance."
+msgstr "更改菜单外观。"

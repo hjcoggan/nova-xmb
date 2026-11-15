@@ -5071,3 +5071,36 @@ msgstr "Папка импорта"
 
 msgid "Preset:"
 msgstr "Предустановка:"
+
+msgid "Set the date, clock and time zone."
+msgstr "Установка даты, времени и часового пояса."
+
+msgid "Adjust the screen and menu display."
+msgstr "Настройка отображения экрана и меню."
+
+msgid "Manage wireless connections."
+msgstr "Управление беспроводными подключениями."
+
+msgid "Reduce power use when idle."
+msgstr "Снижение энергопотребления в режиме ожидания."
+
+msgid "Adjust sound and volume."
+msgstr "Настройка звука и громкости."
+
+msgid "Change system settings."
+msgstr "Изменение системных настроек."
+
+msgid "Update the system software."
+msgstr "Обновление системного программного обеспечения."
+
+msgid "Choose the menu background."
+msgstr "Выбор фона меню."
+
+msgid "Choose the menu colour."
+msgstr "Выбор цвета меню."
+
+msgid "Set menu lighting by time of day."
+msgstr "Настройка освещения меню в зависимости от времени суток."
+
+msgid "Change the menu appearance."
+msgstr "Изменение внешнего вида меню."

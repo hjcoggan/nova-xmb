@@ -5071,3 +5071,36 @@ msgstr "Carpeta de importación"
 
 msgid "Preset:"
 msgstr "Preajuste:"
+
+msgid "Set the date, clock and time zone."
+msgstr "Establece la fecha, la hora y la zona horaria."
+
+msgid "Adjust the screen and menu display."
+msgstr "Ajusta la pantalla y la visualización del menú."
+
+msgid "Manage wireless connections."
+msgstr "Gestiona las conexiones inalámbricas."
+
+msgid "Reduce power use when idle."
+msgstr "Reduce el consumo de energía cuando está inactivo."
+
+msgid "Adjust sound and volume."
+msgstr "Ajusta el sonido y el volumen."
+
+msgid "Change system settings."
+msgstr "Cambia la configuración del sistema."
+
+msgid "Update the system software."
+msgstr "Actualiza el software del sistema."
+
+msgid "Choose the menu background."
+msgstr "Elige el fondo del menú."
+
+msgid "Choose the menu colour."
+msgstr "Elige el color del menú."
+
+msgid "Set menu lighting by time of day."
+msgstr "Ajusta la iluminación del menú según la hora del día."
+
+msgid "Change the menu appearance."
+msgstr "Cambia la apariencia del menú."
