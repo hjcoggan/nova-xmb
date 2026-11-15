@@ -34,6 +34,7 @@ extern "C" {
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -605,6 +606,13 @@ class nova_update_item final : public progress_item {
             return status::running;
         }
     private:
+        static constexpr std::size_t max_event_line_bytes=1024U*1024U;
+
+        void reject_oversized_event() {
+            std::lock_guard<std::mutex> lock(mutex);
+            failed=true;
+            last_message="System update emitted an oversized event.";
+        }
         void handle_line(std::string line) {
             while(!line.empty() && (line.back()=='\n' || line.back()=='\r')) line.pop_back();
             if(line.empty()) return;
@@ -632,14 +640,34 @@ class nova_update_item final : public progress_item {
         void read_events() {
 #ifndef _WIN32
             std::string pending;
+            bool discarding_oversized_line=false;
             char buf[1024];
             for(;;) {
                 const ssize_t n=nova_read_fd(read_fd,buf,sizeof(buf));
                 if(n>0) {
-                    pending.append(buf,static_cast<std::size_t>(n));
+                    if(discarding_oversized_line) {
+                        const auto nl=std::string_view(buf,static_cast<std::size_t>(n)).find('\n');
+                        if(nl==std::string_view::npos) continue;
+                        discarding_oversized_line=false;
+                        if(nl+1<static_cast<std::size_t>(n)) pending.append(buf+nl+1,static_cast<std::size_t>(n)-nl-1);
+                    } else {
+                        pending.append(buf,static_cast<std::size_t>(n));
+                    }
                     for(;;) {
                         const auto nl=pending.find('\n');
-                        if(nl==std::string::npos) break;
+                        if(nl==std::string::npos) {
+                            if(pending.size()>max_event_line_bytes) {
+                                pending.clear();
+                                discarding_oversized_line=true;
+                                reject_oversized_event();
+                            }
+                            break;
+                        }
+                        if(nl>max_event_line_bytes) {
+                            pending.erase(0,nl+1);
+                            reject_oversized_event();
+                            continue;
+                        }
                         auto line=pending.substr(0,nl);
                         pending.erase(0,nl+1);
                         handle_line(std::move(line));
@@ -650,7 +678,7 @@ class nova_update_item final : public progress_item {
             }
             ::close(read_fd);
             read_fd=-1;
-            handle_line(std::move(pending));
+            if(!discarding_oversized_line) handle_line(std::move(pending));
             int raw=0;
             while(::waitpid(child_pid,&raw,0)<0 && errno==EINTR) {}
             const int code=WIFEXITED(raw)?WEXITSTATUS(raw):-1;
