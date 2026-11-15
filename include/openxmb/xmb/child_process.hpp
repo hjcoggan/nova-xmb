@@ -8,13 +8,31 @@
 
 #include <cerrno>
 #include <chrono>
-#include <csignal>
 #include <optional>
-#include <spawn.h>
 #include <string>
+#include <vector>
+
+#ifdef _WIN32
+namespace openxmb::xmb {
+
+// Pause capture is a Wayland/Linux feature. Keep its interface available to
+// the shell on Windows, where the pause panel uses its normal glass fallback.
+class child_process {
+ public:
+  bool spawn(std::vector<std::string>) { return false; }
+  [[nodiscard]] bool running() const noexcept { return false; }
+  std::optional<bool> poll() { return false; }
+  void terminate() noexcept {}
+  static std::size_t reap_orphans() noexcept { return 0; }
+};
+
+}  // namespace openxmb::xmb
+#else
+
+#include <csignal>
+#include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <vector>
 
 extern char **environ;
 
@@ -108,3 +126,5 @@ class child_process {
 };
 
 }  // namespace openxmb::xmb
+
+#endif  // _WIN32
