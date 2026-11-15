@@ -132,6 +132,14 @@ inline int nova_pipe_cloexec(int fds[2]) {
     return 0;
 #endif
 }
+inline int nova_dup_to(int source,int target) {
+    if(::dup2(source,target)<0) return -1;
+    if(source==target) {
+        const int flags=::fcntl(target,F_GETFD);
+        if(flags<0 || ::fcntl(target,F_SETFD,flags&~FD_CLOEXEC)<0) return -1;
+    }
+    return 0;
+}
 #endif
 inline int nova_exec_capture(const std::vector<std::string>& args,std::string& stdout_out) {
 #ifdef _WIN32
@@ -149,12 +157,9 @@ inline int nova_exec_capture(const std::vector<std::string>& args,std::string& s
     if(pid==0) {
         ::close(pipefd[0]);
         const int devnull=::open("/dev/null",O_RDWR);
-        if(devnull>=0) {
-            ::dup2(devnull,STDIN_FILENO);
-            ::dup2(devnull,STDERR_FILENO);
-            if(devnull>STDERR_FILENO) ::close(devnull);
-        }
-        ::dup2(pipefd[1],STDOUT_FILENO);
+        if(devnull<0 || nova_dup_to(devnull,STDIN_FILENO)<0 || nova_dup_to(devnull,STDERR_FILENO)<0) ::_exit(126);
+        if(devnull>STDERR_FILENO) ::close(devnull);
+        if(nova_dup_to(pipefd[1],STDOUT_FILENO)<0) ::_exit(126);
         if(pipefd[1]!=STDOUT_FILENO) ::close(pipefd[1]);
         ::execvp(args.front().c_str(),c_args.data());
         ::_exit(127);
@@ -571,12 +576,9 @@ class nova_update_item final : public progress_item {
             if(pid==0) {
                 ::close(pipefd[0]);
                 const int devnull=::open("/dev/null",O_RDWR);
-                if(devnull>=0) {
-                    ::dup2(devnull,STDIN_FILENO);
-                    if(devnull>STDERR_FILENO) ::close(devnull);
-                }
-                ::dup2(pipefd[1],STDOUT_FILENO);
-                ::dup2(pipefd[1],STDERR_FILENO);
+                if(devnull<0 || nova_dup_to(devnull,STDIN_FILENO)<0) ::_exit(126);
+                if(devnull>STDERR_FILENO) ::close(devnull);
+                if(nova_dup_to(pipefd[1],STDOUT_FILENO)<0 || nova_dup_to(pipefd[1],STDERR_FILENO)<0) ::_exit(126);
                 if(pipefd[1]!=STDOUT_FILENO && pipefd[1]!=STDERR_FILENO) ::close(pipefd[1]);
                 const char* const argv[]={"nova-update","--json",nullptr};
                 ::execvp("nova-update",const_cast<char* const*>(argv));
