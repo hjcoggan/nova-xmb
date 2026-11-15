@@ -647,7 +647,11 @@ class nova_update_item final : public progress_item {
                     last_message=detail.empty()?"System update failed.":detail;
                     failed=true;
                 } else if(event=="done") {
-                    if(!parsed.value("ok",true)) {
+                    const auto ok=parsed.find("ok");
+                    if(ok==parsed.end() || !ok->is_boolean()) {
+                        failed=true;
+                        last_message="nova-update emitted an invalid completion event.";
+                    } else if(!ok->get<bool>()) {
                         last_message=detail.empty()?"System update failed.":detail;
                         failed=true;
                     } else {
