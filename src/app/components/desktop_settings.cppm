@@ -113,6 +113,33 @@ inline ssize_t nova_read_fd(int fd,char* buffer,std::size_t size) {
     struct iovec vec{buffer,size};
     return ::readv(fd,&vec,1);
 }
+inline int nova_pipe_cloexec(int fds[2]) {
+#ifdef __linux__
+    return ::pipe2(fds,O_CLOEXEC);
+#else
+    // Portable fallback; unlike pipe2, setting these flags is not atomic.
+    if(::pipe(fds)!=0) return -1;
+    for(int i=0;i<2;++i) {
+        const int flags=::fcntl(fds[i],F_GETFD);
+        if(flags<0 || ::fcntl(fds[i],F_SETFD,flags|FD_CLOEXEC)<0) {
+            const int error=errno;
+            ::close(fds[0]);
+            ::close(fds[1]);
+            errno=error;
+            return -1;
+        }
+    }
+    return 0;
+#endif
+}
+inline int nova_dup_to(int source,int target) {
+    if(::dup2(source,target)<0) return -1;
+    if(source==target) {
+        const int flags=::fcntl(target,F_GETFD);
+        if(flags<0 || ::fcntl(target,F_SETFD,flags&~FD_CLOEXEC)<0) return -1;
+    }
+    return 0;
+}
 #endif
 inline int nova_exec_capture(const std::vector<std::string>& args,std::string& stdout_out) {
 #ifdef _WIN32
@@ -120,37 +147,50 @@ inline int nova_exec_capture(const std::vector<std::string>& args,std::string& s
 #else
     stdout_out.clear();
     if(args.empty()) return -1;
+    std::vector<char*> c_args;
+    c_args.reserve(args.size()+1);
+    for(const auto& s:args) c_args.push_back(const_cast<char*>(s.c_str()));
+    c_args.push_back(nullptr);
     int pipefd[2]{-1,-1};
-    if(::pipe(pipefd)!=0) return -1;
+    if(nova_pipe_cloexec(pipefd)!=0) return -1;
     const pid_t pid=::fork();
     if(pid==0) {
         ::close(pipefd[0]);
         const int devnull=::open("/dev/null",O_RDWR);
-        if(devnull>=0) {
-            ::dup2(devnull,STDIN_FILENO);
-            ::dup2(devnull,STDERR_FILENO);
-            if(devnull>STDERR_FILENO) ::close(devnull);
-        }
-        ::dup2(pipefd[1],STDOUT_FILENO);
+        if(devnull<0 || nova_dup_to(devnull,STDIN_FILENO)<0 || nova_dup_to(devnull,STDERR_FILENO)<0) ::_exit(126);
+        if(devnull>STDERR_FILENO) ::close(devnull);
+        if(nova_dup_to(pipefd[1],STDOUT_FILENO)<0) ::_exit(126);
         if(pipefd[1]!=STDOUT_FILENO) ::close(pipefd[1]);
-        std::vector<char*> c_args;
-        c_args.reserve(args.size()+1);
-        for(const auto& s:args) c_args.push_back(const_cast<char*>(s.c_str()));
-        c_args.push_back(nullptr);
         ::execvp(args.front().c_str(),c_args.data());
         ::_exit(127);
     }
     ::close(pipefd[1]);
     if(pid<0) { ::close(pipefd[0]); return -1; }
+    // Status commands should be small; cap memory while still draining the pipe.
+    constexpr std::size_t max_stdout_bytes=16U*1024U*1024U;
+    bool output_too_large=false;
+    bool read_failed=false;
     char buf[4096];
     for(;;) {
         const ssize_t n=nova_read_fd(pipefd[0],buf,sizeof(buf));
-        if(n>0) stdout_out.append(buf,static_cast<std::size_t>(n));
-        else if(n==0 || (n<0 && errno!=EINTR)) break;
+        if(n>0) {
+            const auto count=static_cast<std::size_t>(n);
+            const auto available=max_stdout_bytes-stdout_out.size();
+            const auto kept=std::min(count,available);
+            stdout_out.append(buf,kept);
+            if(kept<count) output_too_large=true;
+        }
+        else if(n==0) break;
+        else if(errno!=EINTR) { read_failed=true; break; }
     }
     ::close(pipefd[0]);
     int status=0;
-    while(::waitpid(pid,&status,0)<0 && errno==EINTR) {}
+    pid_t waited;
+    do { waited=::waitpid(pid,&status,0); } while(waited<0 && errno==EINTR);
+    if(output_too_large || read_failed || waited<0) {
+        stdout_out.clear();
+        return -1;
+    }
     return WIFEXITED(status)?WEXITSTATUS(status):-1;
 #endif
 }
@@ -528,7 +568,7 @@ class nova_update_item final : public progress_item {
 #else
             message="Checking for system updates...";
             int pipefd[2]{-1,-1};
-            if(::pipe(pipefd)!=0) {
+            if(nova_pipe_cloexec(pipefd)!=0) {
                 message="Could not open pipe for nova-update.";
                 return status::error;
             }
@@ -536,12 +576,9 @@ class nova_update_item final : public progress_item {
             if(pid==0) {
                 ::close(pipefd[0]);
                 const int devnull=::open("/dev/null",O_RDWR);
-                if(devnull>=0) {
-                    ::dup2(devnull,STDIN_FILENO);
-                    if(devnull>STDERR_FILENO) ::close(devnull);
-                }
-                ::dup2(pipefd[1],STDOUT_FILENO);
-                ::dup2(pipefd[1],STDERR_FILENO);
+                if(devnull<0 || nova_dup_to(devnull,STDIN_FILENO)<0) ::_exit(126);
+                if(devnull>STDERR_FILENO) ::close(devnull);
+                if(nova_dup_to(pipefd[1],STDOUT_FILENO)<0 || nova_dup_to(pipefd[1],STDERR_FILENO)<0) ::_exit(126);
                 if(pipefd[1]!=STDOUT_FILENO && pipefd[1]!=STDERR_FILENO) ::close(pipefd[1]);
                 const char* const argv[]={"nova-update","--json",nullptr};
                 ::execvp("nova-update",const_cast<char* const*>(argv));
