@@ -544,7 +544,7 @@ class nova_update_item final : public progress_item {
 #else
             message="Checking for system updates...";
             int pipefd[2]{-1,-1};
-            if(::pipe2(pipefd,O_CLOEXEC)!=0) {
+            if(::pipe(pipefd)!=0) {
                 message="Could not open pipe for nova-update.";
                 return status::error;
             }
