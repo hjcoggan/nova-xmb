@@ -10,6 +10,8 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
+AUROREENGINE_REPOSITORY = 'https://github.com/phenom64/AuroreEngine.git'
+AUROREENGINE_REVISION = '52c724e316c4154637da317a400a7c15928eaef4'
 
 
 def run(*args):
@@ -38,6 +40,29 @@ def validate_media_tools():
     print('PASS FFmpeg fixture encoders and filters', flush=True)
 
 
+def prepare_auroreengine(build):
+    """Prepare the same patched engine checkout used by the Nix package."""
+    source = build / '_deps' / 'auroreengine-local'
+    source.parent.mkdir(parents=True, exist_ok=True)
+    if not (source / '.git').is_dir():
+        if source.exists():
+            shutil.rmtree(source)
+        run('git', 'clone', '--no-checkout', AUROREENGINE_REPOSITORY, source)
+    current = subprocess.check_output(
+        ['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
+    if current != AUROREENGINE_REVISION:
+        run('git', '-C', source, 'fetch', '--depth=1', 'origin', AUROREENGINE_REVISION)
+        run('git', '-C', source, 'checkout', '--detach', 'FETCH_HEAD')
+
+    patch = ROOT / 'nova/aurore-engine.patch'
+    already_applied = subprocess.run(
+        ['git', '-C', str(source), 'apply', '--reverse', '--check', str(patch)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False).returncode == 0
+    if not already_applied:
+        run('git', '-C', source, 'apply', patch)
+    return source
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--arch', required=True)
@@ -48,12 +73,13 @@ def main():
     build = args.build_dir.resolve()
     stage = args.stage.resolve()
     run(sys.executable, ROOT / 'scripts/ci/fonts.py', '--build-dir', build)
+    auroreengine = prepare_auroreengine(build)
     config = [
         'cmake', '-S', ROOT, '-B', build, '-G', 'Ninja',
         '-DCMAKE_BUILD_TYPE=Release', f'-DCMAKE_INSTALL_PREFIX={stage}',
         '-DBUILD_SHARED_LIBS=OFF',
         '-DCMAKE_INSTALL_BINDIR=bin', '-DCMAKE_INSTALL_DATAROOTDIR=share',
-        '-DAUROREENGINE_LOCAL=', '-DOPENXMB_IMPORT_XMB_WEB_COMPAT=OFF',
+        f'-DAUROREENGINE_LOCAL={auroreengine}', '-DOPENXMB_IMPORT_XMB_WEB_COMPAT=OFF',
         '-DOPENXMB_BUILD_NATIVE_TESTS=ON', '-DAUROREENGINE_BUILD_V2_TESTS=ON',
         '-DENABLE_BROWSER=ON', '-DENABLE_VIDEO_PLAYER=ON',
         '-DENABLE_LIBRETRO=ON', '-DENABLE_DISC_MEDIA=ON',
