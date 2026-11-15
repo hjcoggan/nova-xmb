@@ -2,8 +2,8 @@
 
 // The console's one glass material: its variants, shape and colour tokens,
 // and the small amount of maths every surface shares. Design units are the
-// 1920x1080 authoring space of app::xmb_canvas. See
-// docs/superpowers/specs/2026-11-15-liquid-glass-design.md.
+// 1920x1080 authoring space of app::xmb_canvas. (The full material spec is a
+// local-only note under docs/superpowers/, which is not tracked in git.)
 
 #include <algorithm>
 #include <array>
