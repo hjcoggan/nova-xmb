@@ -654,25 +654,27 @@ class nova_update_item final : public progress_item {
                     } else {
                         pending.append(buf,static_cast<std::size_t>(n));
                     }
+                    std::size_t consumed=0;
                     for(;;) {
-                        const auto nl=pending.find('\n');
+                        const auto nl=pending.find('\n',consumed);
                         if(nl==std::string::npos) {
-                            if(pending.size()>max_event_line_bytes) {
+                            if(pending.size()-consumed>max_event_line_bytes) {
                                 pending.clear();
                                 discarding_oversized_line=true;
                                 reject_oversized_event();
                             }
                             break;
                         }
-                        if(nl>max_event_line_bytes) {
-                            pending.erase(0,nl+1);
+                        if(nl-consumed>max_event_line_bytes) {
                             reject_oversized_event();
+                            consumed=nl+1;
                             continue;
                         }
-                        auto line=pending.substr(0,nl);
-                        pending.erase(0,nl+1);
+                        auto line=pending.substr(consumed,nl-consumed);
+                        consumed=nl+1;
                         handle_line(std::move(line));
                     }
+                    if(consumed>0) pending.erase(0,consumed);
                 } else if(n==0 || (n<0 && errno!=EINTR)) {
                     break;
                 }
