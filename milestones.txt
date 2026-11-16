@@ -1,12 +1,11 @@
 project:
   name: OpenXMB
   scope: Native Vulkan desktop shell with AuroreEngine, C++23 modules and JSON configuration.
-  targets: Linux, macOS and Windows (platform-specific behavior requires testing)
+  targets: Linux (the Retroid Pocket Nova, built through nova-nix)
   deferred: OpenGL ES, H700/RG34XX and handheld distribution
 
-# Status describes implementation, not release acceptance. See docs/desktop-release.md
-# for workflows, validation commands and compatibility limits. The desktop build
-# and individual tests do not establish visual parity, performance or completeness.
+# Status describes implementation, not release acceptance. The build and
+# individual tests do not establish visual parity, performance or completeness.
 milestones:
   - id: M1_scaffold
     goal: Build and run the shell with JSON configuration.

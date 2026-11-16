@@ -36,9 +36,7 @@ foreach(_file IN LISTS _files)
     continue()
   endif()
   file(READ "${_file}" _contents LIMIT 16777216)
-  # Publication tests must name the approved source branch. Keep that release
-  # policy separate from the product-source branding check.
-  if(_contents MATCHES "${_branch_code}" AND NOT _file MATCHES "/tests/packaging/")
+  if(_contents MATCHES "${_branch_code}")
     list(APPEND _violations "branch codename leaked into ${_file}")
   endif()
   string(FIND "${_contents}" "${_legacy_identity}" _legacy_position)

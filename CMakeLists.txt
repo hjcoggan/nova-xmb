@@ -35,7 +35,7 @@ message(STATUS "${COLOR_GREEN}Starting OpenXMB Builder...${COLOR_RESET}")
 message(STATUS "${COLOR_YELLOW}™ & © 2025-2026 Syndromatic Ltd Britannia, Syndromatic Ltd Bharat. All rights reserved.${COLOR_RESET}")
 
 if(WIN32 AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  message(FATAL_ERROR "OpenXMB's current C++23 module/#embed build is supported on Windows with LLVM/Clang + Ninja. Use the windows-vcpkg preset or set CMAKE_CXX_COMPILER=clang++.")
+  message(FATAL_ERROR "OpenXMB's current C++23 module/#embed build is supported on Windows with LLVM/Clang + Ninja. Set CMAKE_CXX_COMPILER=clang++.")
 endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   set(_openxmb_clang_scan_deps_names clang-scan-deps)
