@@ -73,8 +73,10 @@ struct library_column {
     std::string_view title;
     std::string_view icon;
 };
-inline constexpr std::array<library_column, 3> library_columns{{
-    {"games", "Games", "icon_category_game.png"},
+inline constexpr std::array<library_column, 5> library_columns{{
+    {"switch", "Switch", "icon_category_nintendo.png"},
+    {"windows", "Windows", "icon_category_windows.png"},
+    {"linux", "Linux", "icon_category_linux.png"},
     {"android", "Android", "icon_category_android.png"},
     {"applications", "Applications", "icon_category_apps.png"},
 }};
