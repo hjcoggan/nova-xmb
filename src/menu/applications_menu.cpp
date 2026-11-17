@@ -499,6 +499,7 @@ std::string runtime_label(const app_info& app)
     if(!is_game_manifest(app)) return "Application";
     const auto& runtime = app.runtime;
     if(runtime == "proton") return "Windows (Proton)";
+    if(runtime == "switch") return "Switch (nx2penguin)";
     if(runtime == "fex") return "x86 Linux (FEX)";
     if(runtime == "android" || runtime == "waydroid") return "Android";
     if(runtime == "emulation" || runtime == "retroarch") return "Emulator";
@@ -651,8 +652,10 @@ std::string library_column_of(const app_info& app)
         }
     }
     if(!is_game_manifest(app)) return "applications";
+    if(app.runtime == "switch") return "switch";
+    if(app.runtime == "proton") return "windows";
     if(app.runtime == "android" || app.runtime == "waydroid") return "android";
-    return "games";
+    return "linux";
 }
 
 library_menu::library_menu(std::string name, auroreengine::texture&& icon, std::string column,
