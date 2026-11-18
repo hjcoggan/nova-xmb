@@ -840,6 +840,24 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
     COMMAND openxmb_glass_tests)
   set_tests_properties(openxmb_glass_tests PROPERTIES TIMEOUT 120)
 
+  add_executable(openxmb_ui_tokens_tests
+    tests/xmb/ui_tokens_tests.cpp
+  )
+  set_target_properties(openxmb_ui_tokens_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+  openxmb_configure_native_test(openxmb_ui_tokens_tests)
+  add_test(NAME openxmb_ui_tokens_tests
+    COMMAND openxmb_ui_tokens_tests)
+  set_tests_properties(openxmb_ui_tokens_tests PROPERTIES TIMEOUT 120)
+
+  add_executable(openxmb_scrolling_text_tests
+    tests/xmb/scrolling_text_tests.cpp
+  )
+  set_target_properties(openxmb_scrolling_text_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+  openxmb_configure_native_test(openxmb_scrolling_text_tests)
+  add_test(NAME openxmb_scrolling_text_tests
+    COMMAND openxmb_scrolling_text_tests)
+  set_tests_properties(openxmb_scrolling_text_tests PROPERTIES TIMEOUT 120)
+
   add_executable(openxmb_live_crossbar_contract_tests
     tests/xmb/live_crossbar_contract_tests.cpp
   )
