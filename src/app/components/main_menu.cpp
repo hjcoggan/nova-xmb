@@ -2043,7 +2043,8 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
                 const bool current_column = &menu == menus[static_cast<std::size_t>(selected)].get();
                 const bool grabbed = move_mode && current_column;
                 auto left = lens::left(SettingsSceneMetrics::icon_center_x + x_shift, extent, wide_art);
-                auto right = text_right + lens::right_padding;
+                // The card ends at the slot edge, never at the panel edge.
+                auto right = std::min(text_right + lens::right_padding, label_right_edge);
                 if(current_column) {
                     // The lens stays lit across moves; only its width eases.
                     const float now_ms = static_cast<float>(std::chrono::duration<double, std::milli>(now.time_since_epoch()).count());
@@ -2099,14 +2100,21 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
                     truncated.append(name.substr(0,fitting));
                     while(!truncated.empty()&&(static_cast<unsigned char>(truncated.back())&0xC0)==0x80) truncated.pop_back();
                     while(!truncated.empty()&&truncated.back()==' ') truncated.pop_back();
-                    if(!truncated.empty()) truncated+="\xE2\x80\xA6";
+                    if(!truncated.empty()) truncated+="...";
                     shown=truncated;
                 }
             }
+            // Clip to the slot so the spare glyph of a scrolled run cannot
+            // spill past the safe area on the right of the panel.
+            renderer.set_clip(label_px / layout.framebuffer_width,
+                (label_py - label_size * layout.scale) / layout.framebuffer_height,
+                label_room * layout.scale / layout.framebuffer_width,
+                label_size * 1.5F * layout.scale / layout.framebuffer_height);
             renderer.draw_text_pixels(shown, label_px + shift * layout.scale, label_py,
                 static_cast<float>(label_size * layout.scale),
                 {text_value, text_value, text_value, static_cast<float>(alpha)},
                 focused ? 0.72F : 0.7F, focused ? item_pulse : 0.0F);
+            renderer.reset_clip();
             if(focused&&!entry.get_description().empty())
                 renderer.draw_text_pixels(entry.get_description(), label_px,
                     static_cast<float>(layout.offset_y + (center_y + 32.0) * layout.scale),

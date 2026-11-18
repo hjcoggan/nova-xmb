@@ -42,7 +42,8 @@ template<class Measure> std::vector<std::string> wrap(std::string_view value,flo
 }
 template<class Measure> std::string tail(std::string_view value,float width,Measure measure) {
     if(measure(value)<=width)return std::string(value);
-    constexpr std::string_view dots="\xE2\x80\xA6";
+    // The console font has no U+2026 glyph; three ASCII dots render correctly.
+    constexpr std::string_view dots="...";
     if(measure(dots)>width)return {};
     for(std::size_t at=0;at<value.size();at=next_boundary(value,at)) {
         auto result=std::string(dots)+std::string(value.substr(at));
@@ -52,7 +53,7 @@ template<class Measure> std::string tail(std::string_view value,float width,Meas
 }
 template<class Measure> std::string ellipsize(std::string_view value,float width,Measure measure) {
     if(measure(value)<=width)return std::string(value);
-    std::string result;constexpr std::string_view dots="\xE2\x80\xA6";
+    std::string result;constexpr std::string_view dots="...";
     if(measure(dots)>width)return result;
     for(std::size_t at=0;at<value.size();) {
         const auto next=next_boundary(value,at);

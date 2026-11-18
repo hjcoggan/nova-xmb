@@ -236,7 +236,7 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
             if(fitting>0&&shown.size()>fitting) {
                 shown.resize(fitting);
                 while(!shown.empty()&&(static_cast<unsigned char>(shown.back())&0xC0)==0x80) shown.pop_back();
-                shown=shown.empty()?"\xE2\x80\xA6":shown+"\xE2\x80\xA6";
+                shown=shown.empty()?"...":shown+"...";
             }
             canvas.text(shown,x+swatch_inset,y,26,{1,1,1,glass::text_primary*open_alpha});
         }

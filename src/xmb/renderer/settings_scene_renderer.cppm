@@ -205,7 +205,7 @@ void draw_wrapped_description(auroreengine::gui_renderer &renderer,
                           (layout.offset_x + row.description_x * layout.scale) -
                           ui::px(ui::space::lg) * layout.scale)));
   std::string text(row.description);
-  const std::string ellipsis = "\xE2\x80\xA6";
+  const std::string ellipsis = "...";
   while (!text.empty() && renderer.text_width_pixels(text, size) > room) {
     text.pop_back();
     while (!text.empty() &&
@@ -323,7 +323,7 @@ void SettingsSceneRenderer::render(auroreengine::gui_renderer &renderer,
       if (room <= 0.0F) {
         value.clear();
       } else if (renderer.text_width_pixels(value,size) > room) {
-        const std::string ellipsis = "\xE2\x80\xA6";
+        const std::string ellipsis = "...";
         while (!value.empty() && renderer.text_width_pixels(value+ellipsis,size) > room) {
           value.pop_back();
           while (!value.empty() && (static_cast<unsigned char>(value.back()) & 0xC0) == 0x80) value.pop_back();

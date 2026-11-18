@@ -927,7 +927,7 @@ export void activate(shell* shell,const openxmb::xmb::CatalogNode& node) {
                     connect_ssid(shell,net.ssid,psk);
                 });
             });
-            overlay->set_top_action("Select Wi-Fi Network");
+            overlay->set_top_action("Wi-Fi Networks");
         });
         return;
     }
