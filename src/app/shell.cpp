@@ -425,26 +425,10 @@ namespace app
                 } else if (msg == "RESUME") {
                     close_pause();
                 } else if (msg == "POWER_MENU") {
-                    const bool open = power_menu_overlay != nullptr &&
-                        std::ranges::any_of(overlays, [this](const auto& overlay) {
-                            return overlay.get() == power_menu_overlay;
-                        });
-                    if (!open) {
-                        auto* ov = emplace_overlay<choice_overlay>(
-                            std::vector<std::string>{"Sleep", "Restart", "Power Off", "Cancel"},
-                            0,
-                            [this](unsigned idx) {
-                                power_menu_overlay = nullptr;
-                                if (idx == 0) (void)std::system("systemctl suspend >/dev/null 2>&1 &");
-                                else if (idx == 1) (void)std::system("systemctl reboot >/dev/null 2>&1 &");
-                                else if (idx == 2) (void)std::system("systemctl poweroff >/dev/null 2>&1 &");
-                            },
-                            [this]() {
-                                power_menu_overlay = nullptr;
-                            });
-                        ov->set_top_action("Power Menu");
-                        power_menu_overlay = ov;
-                    }
+                    // One power UI: the Power column. The socket verb just
+                    // focuses it and highlights Sleep; nothing is actioned
+                    // until A is pressed on the device.
+                    menu.show_power();
                 }
             }
         }

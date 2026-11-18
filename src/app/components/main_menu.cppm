@@ -53,6 +53,9 @@ class main_menu : public action_receiver {
 
         result on_action(action action) override;
         void show_settings();
+        // POWER_MENU maps onto the existing Power column; there is no second
+        // power sheet to maintain.
+        void show_power();
         // Picks up the selected library item so the player can reorder it or
         // carry it to another column.
         void begin_move();

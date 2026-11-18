@@ -2205,6 +2205,13 @@ void main_menu::show_settings() {
     while(in_submenu){back();finish_media_transition();}
     select(1);
 }
+void main_menu::show_power() {
+    finish_media_transition();
+    while(in_submenu){back();finish_media_transition();}
+    // Power is the first console column; keep the highlighted action on Sleep.
+    select(0);
+    if(!menus.empty()&&menus[0]->get_submenus_count()>0) menus[0]->select_submenu(0);
+}
 std::unique_ptr<main_menu::media_scene_state> main_menu::capture_media_scene(menu::menu& child,time_point now,bool animate_focus) {
     auto state=std::make_unique<media_scene_state>();
     auto& presentation=state->catalog;
