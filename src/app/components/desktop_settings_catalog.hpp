@@ -45,6 +45,7 @@ inline const std::vector<Entry>& entries() {
         {"Display","display.screen.brightness","Screen Brightness","Hardware panel backlight level.",{"10","20","30","40","50","60","70","80","90","100"}},
         {"Display","vsync","VSync","Synchronise presentation to the display.",{"On","Off"}},
         {"Display","fps","Frame Limit","Maximum shell rendering rate.",{"30","60","120","144","240","Unlimited"}},
+        {"Display","status.analog.clock","Analog Clock","Show an analog face in the status bar.",{"Off","On"}},
         {"Display","samples","Anti-aliasing","Multisample anti-aliasing for supported graphics hardware.",{"1","2","4","8"}},
         {"Display","glass","Glass Icons","Use refractive icon materials.",{"On","Off"}},
         {"Sound","audio.device","Audio Output Device","Select an available playback device."},
@@ -89,14 +90,17 @@ inline void populate(openxmb::xmb::Catalog& catalog,
         [](std::string_view text){return std::string(text);}, bool console = false) {
     using namespace openxmb::xmb;
     struct ConsoleRow { std::string_view key, group, label; };
-    static constexpr std::array<ConsoleRow,27> console_rows{{
-        ConsoleRow{"theme.waves","Theme",""}, {"theme.particles","Theme",""}, {"theme.reset","Theme",""},
-        {"display.screen.brightness","Display",""}, {"ui.scale","Display",""}, {"fps","Display",""}, {"debug.fps","Display",""},
+    // Console mode is the only mode. Only these rows are exposed; desktop
+    // tuning knobs, diagnostics, reset actions and the legacy About/Licences
+    // panels are gone, along with the code behind them.
+    static constexpr std::array<ConsoleRow,21> console_rows{{
+        ConsoleRow{"theme.waves","Theme",""}, {"theme.particles","Theme",""},
+        {"display.screen.brightness","Display",""}, {"debug.fps","Display",""}, {"status.analog.clock","Display",""},
         {"audio.master","Sound","Volume"}, {"audio.device","Sound",""}, {"audio.effects","Sound","Menu Sounds"}, {"audio.startup","Sound",""},
         {"network.wifi","Network",""}, {"network.wifi.join","Network",""}, {"network.bluetooth","Network",""}, {"network.bluetooth.devices","Network",""}, {"network.aeroplane","Network",""},
         {"date.format","Date and Time",""}, {"time.format","Date and Time",""}, {"time.offset","Date and Time",""},
         {"power.dim","Power Save",""}, {"power.reduced.motion","Power Save",""},
-        {"language","System",""}, {"startup.intro","System",""}, {"games.rescan","System",""}, {"about","System",""}, {"licenses","System",""}, {"reset","System",""}
+        {"language","System",""}, {"games.rescan","System",""}
     }};
     auto& root=catalog.nodes.at("category.settings");
     root.children={"category.settings.system.update","category.settings.theme.settings"};root.default_selection=1;

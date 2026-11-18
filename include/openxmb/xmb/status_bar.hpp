@@ -62,6 +62,12 @@ struct StatusBarStatus {
   // -1: no wireless interface, indicator hidden. 0: interface present but
   // down or unassociated, bars drawn dim. 1..100: link quality in percent.
   int wifi_signal = -1;
+  // Radio state from rfkill. Aeroplane means both radios are blocked; in that
+  // state the plane glyph replaces the Wi-Fi and Bluetooth glyphs.
+  bool bluetooth_on = false;
+  bool aeroplane_on = false;
+  // The analog face is opt-in; most people just want the digital time.
+  bool analog_clock = false;
 };
 
 struct ClockHandAngles {

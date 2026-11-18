@@ -44,10 +44,10 @@ int main(int argc,char** argv) try {
         auto console_catalog=std::move(*console_loaded.value);
         app::desktop_settings::populate(console_catalog,[](std::string_view text){return std::string(text);},true);
         const auto& display=console_catalog.nodes.at("category.settings.desktop.Display").children;
-        require(display.size()>=3,"console Display group has its rows");
+        require(display.size()==3,"console Display has only the rows a handheld needs");
         require(display[0]=="category.settings.desktop.display.screen.brightness","Display opens on Screen Brightness");
-        require(display[1]=="category.settings.desktop.ui.scale","Interface Scale second");
-        require(display[2]=="category.settings.desktop.fps","Frame Limit third");
+        require(display[1]=="category.settings.desktop.debug.fps","Show FPS second");
+        require(display[2]=="category.settings.desktop.status.analog.clock","Analog Clock third");
         const auto& sound=console_catalog.nodes.at("category.settings.desktop.Sound").children;
         require(!sound.empty()&&sound[0]=="category.settings.desktop.audio.master","Sound opens on Volume");
     }

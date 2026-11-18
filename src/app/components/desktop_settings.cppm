@@ -519,6 +519,7 @@ export std::string value(const std::string& key,shell* host=nullptr) {
     if(key=="music.folder") return c.music_path().string();
     if(key=="videos.folder") return c.videos_path().string();
     if(key=="debug.fps") return c.showFPS?"On":"Off";
+    if(key=="status.analog.clock") return c.enabled(key,false)?"On":"Off";
     if(key=="debug.memory") return c.showMemory?"On":"Off";
     if(key=="about") return "OpenXMB " OPENXMB_VERSION_STRING;
     if(key=="system.name") return c.preference(key,"OpenXMB system");
@@ -880,11 +881,8 @@ export void activate(shell* shell,const openxmb::xmb::CatalogNode& node) {
     if(key=="theme.install") {shell->emplace_overlay<text_entry_overlay>("Theme archive or folder","",[shell](std::string path){try {shell->theme_library()->import_theme(std::filesystem::u8path(path));shell->reload_menu();}catch(const std::exception& e){show_error(shell,e.what());}});return;}
     if(key=="theme.preset.save") {shell->emplace_overlay<text_entry_overlay>("Preset name","",[shell](std::string name){try {auto library=shell->theme_library();const auto theme=library->create_custom_theme(name,nlohmann::json::parse(config::CONFIG.shell_snapshot()));library->save_preset(name,theme.id,{});}catch(const std::exception& e){show_error(shell,e.what());}});return;}
     if(key=="theme.preset.load") {const auto names=shell->theme_library()->presets();if(names.empty()){show_error(shell,"No saved theme presets.");return;}shell->emplace_overlay<choice_overlay>(names,0,[shell,names](unsigned i){try{shell->apply_theme(shell->theme_library()->load_preset(names.at(i)));}catch(const std::exception& e){show_error(shell,e.what());}});return;}
-    if(key=="theme.reset") {shell->emplace_overlay<message_overlay>("Restore Original Theme?","Restore the original theme appearance?",std::vector<std::string>{"No","Yes"},[shell](unsigned i){if(i)shell->apply_theme(shell->theme_library()->revert());});return;}
-    if(key=="about") {shell->open_panel("about");return;}
-    if(key=="licenses") {shell->open_panel("licenses");return;}
+
     if(key=="browser.clear") {shell->emplace_overlay<message_overlay>("Clear Browsing Data?","Remove browser cookies, site storage and cached pages?",std::vector<std::string>{"No","Yes"},[](unsigned i){if(i) {config::CONFIG.preferences["browser.clear_site_data"]=std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());config::CONFIG.save_config();}});return;}
-    if(key=="reset") {shell->emplace_overlay<message_overlay>("Restore Default Settings?","Restore this profile's preferences? Your media files will be preserved.",std::vector<std::string>{"No","Yes"},[shell](unsigned i){if(i) {apply(shell,"autostart","Off");shell->reset_settings();}});return;}
     if(key=="network.wifi.join") {
         auto found=std::make_shared<std::vector<NovaWifiNetwork>>();
         auto item=std::make_unique<nova_async_task_item<std::function<void()>>>("Scanning for Wi-Fi networks...",[found](){

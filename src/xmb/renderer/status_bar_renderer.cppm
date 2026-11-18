@@ -43,6 +43,8 @@ public:
 namespace openxmb::xmb {
 namespace {
 
+namespace glass = openxmb::xmb::glass;
+
 struct ContainedLayout {
   float scale{};
   float offset_x{};
@@ -267,6 +269,24 @@ read_sysfs_text(const std::filesystem::path &path) {
   return level.has_value() ? wireless_signal_from_dbm(*level) : 100;
 }
 
+// rfkill exposes each radio as /sys/class/rfkill/rfkillN/type and /state,
+// where 0 is blocked and anything else is unblocked. A missing node leaves the
+// radio unknown (and its glyph hidden) rather than showing a false indicator.
+[[nodiscard]] bool radio_unblocked(std::string_view wanted_type) {
+  std::error_code error;
+  const std::filesystem::path root{"/sys/class/rfkill"};
+  for (std::filesystem::directory_iterator entry{root, error}, end;
+       entry != end; entry.increment(error)) {
+    const auto type = read_sysfs_text(entry->path() / "type");
+    if (type != wanted_type) {
+      continue;
+    }
+    const auto state = read_sysfs_text(entry->path() / "state");
+    return !state.empty() && state != "0";
+  }
+  return false;
+}
+
 [[nodiscard]] StatusBarStatus read_status_bar_status() {
   StatusBarStatus status{};
   const auto supply = battery_supply_path();
@@ -277,6 +297,9 @@ read_sysfs_text(const std::filesystem::path &path) {
     status.charging = state == "Full" || state.starts_with("Charg");
   }
   status.wifi_signal = read_wifi_signal();
+  const bool wifi_on = radio_unblocked("wlan");
+  status.bluetooth_on = radio_unblocked("bluetooth");
+  status.aeroplane_on = !wifi_on && !status.bluetooth_on;
   return status;
 }
 
@@ -514,7 +537,8 @@ void draw_battery_indicator(auroreengine::gui_renderer &renderer,
                             const ContainedLayout &layout, float left_x,
                             float center_y, int percent, bool charging,
                             float opacity) {
-  const auto stroke = logical_hairline(layout);
+  // The same hairline weight as the clock and the radio glyphs.
+  const auto stroke = logical_hairline(layout) * 1.8F;
   const auto alpha = 0.92F * opacity;
   const auto outline = glm::vec4{1.0F, 1.0F, 1.0F, alpha};
   const auto top = center_y - battery_body_height * 0.5F;
@@ -538,8 +562,14 @@ void draw_battery_indicator(auroreengine::gui_renderer &renderer,
   if (level <= 0.0F) {
     return;
   }
+  // The charge level uses the one accent material; charging keeps its green
+  // so it still reads at a glance.
+  const auto accent = glm::vec4{
+      glass::srgb_to_linear(glass::accent_srgb[0]),
+      glass::srgb_to_linear(glass::accent_srgb[1]),
+      glass::srgb_to_linear(glass::accent_srgb[2]), alpha};
   const auto fill = charging ? glm::vec4{0.52F, 1.0F, 0.62F, alpha}
-                             : glm::vec4{1.0F, 1.0F, 1.0F, alpha};
+                             : accent;
   draw_logical_rect(renderer, layout, left_x + inset, top + inset,
                     std::max(stroke, inner_width * level), inner_height,
                     fill);
@@ -551,12 +581,15 @@ void draw_battery_indicator(auroreengine::gui_renderer &renderer,
 void draw_wifi_indicator(auroreengine::gui_renderer &renderer,
                          const ContainedLayout &layout, float left_x,
                          float center_y, int signal, float opacity) {
-  const auto stroke = logical_hairline(layout);
+  const auto stroke = logical_hairline(layout) * 1.8F;
   const auto lit = signal <= 0    ? 0
                    : signal >= 70 ? 3
                    : signal >= 40 ? 2
                                   : 1;
-  const auto lit_color = glm::vec4{1.0F, 1.0F, 1.0F, 0.92F * opacity};
+  const auto lit_color = glm::vec4{
+      glass::srgb_to_linear(glass::accent_srgb[0]),
+      glass::srgb_to_linear(glass::accent_srgb[1]),
+      glass::srgb_to_linear(glass::accent_srgb[2]), 0.95F * opacity};
   const auto dim_color = glm::vec4{1.0F, 1.0F, 1.0F, 0.28F * opacity};
 
   const auto total_height =
@@ -572,6 +605,51 @@ void draw_wifi_indicator(auroreengine::gui_renderer &renderer,
     draw_wifi_arc(renderer, layout, center_x, origin_y, wifi_arc_radii[index],
                   stroke, color);
   }
+}
+
+void draw_segment(auroreengine::gui_renderer &renderer,
+                  const ContainedLayout &layout, float x0, float y0, float x1,
+                  float y1, float width, glm::vec4 color) {
+  const auto dx = x1 - x0;
+  const auto dy = y1 - y0;
+  draw_hand(renderer, layout, x0, y0, std::atan2(dy, dx),
+            std::hypot(dx, dy), width, color);
+}
+
+// Both radio glyphs use the same hairline as the clock, so the capsule reads
+// as one set of instruments rather than three different icon styles.
+void draw_bluetooth_indicator(auroreengine::gui_renderer &renderer,
+                              const ContainedLayout &layout, float left_x,
+                              float center_y, float opacity) {
+  const auto stroke = logical_hairline(layout) * 1.8F;
+  const auto color = glm::vec4{1.0F, 1.0F, 1.0F, 0.92F * opacity};
+  const auto cx = left_x + 5.0F;
+  const auto top = center_y - 7.0F;
+  const auto bottom = center_y + 7.0F;
+  draw_logical_rect(renderer, layout, cx - stroke * 0.5F, top, stroke,
+                    bottom - top, color);
+  draw_segment(renderer, layout, cx, center_y, cx + 4.5F, center_y - 3.5F,
+               stroke, color);
+  draw_segment(renderer, layout, cx, center_y, cx + 4.5F, center_y + 3.5F,
+               stroke, color);
+  draw_segment(renderer, layout, cx + 4.5F, center_y - 3.5F, cx, top, stroke,
+               color);
+  draw_segment(renderer, layout, cx + 4.5F, center_y + 3.5F, cx, bottom,
+               stroke, color);
+}
+
+void draw_aeroplane_indicator(auroreengine::gui_renderer &renderer,
+                              const ContainedLayout &layout, float left_x,
+                              float center_y, float opacity) {
+  const auto stroke = logical_hairline(layout) * 1.8F;
+  const auto color = glm::vec4{1.0F, 1.0F, 1.0F, 0.92F * opacity};
+  const auto cx = left_x + 6.0F;
+  draw_segment(renderer, layout, cx - 5.0F, center_y + 5.0F,
+               cx + 5.0F, center_y - 5.0F, stroke, color);
+  draw_segment(renderer, layout, cx - 3.5F, center_y - 1.0F,
+               cx + 1.0F, center_y + 3.5F, stroke, color);
+  draw_segment(renderer, layout, cx + 2.0F, center_y - 4.5F,
+               cx + 4.5F, center_y - 2.0F, stroke, color);
 }
 
 } // namespace
@@ -629,13 +707,29 @@ void StatusBarRenderer::render(auroreengine::gui_renderer &renderer,
         renderer.text_width_pixels(battery_text, text_px) / scale_guard;
   }
   const auto battery_present = !battery_text.empty();
-  const auto wifi_present = status.wifi_signal >= 0;
+  // In aeroplane mode the radios are blocked: show one plane instead of a
+  // Wi-Fi glyph with no signal, and no Bluetooth glyph.
+  const auto plane_present = status.aeroplane_on;
+  const auto wifi_present = !plane_present && status.wifi_signal >= 0;
+  const auto bluetooth_present = !plane_present && status.bluetooth_on;
+  constexpr float radio_indicator_width = 12.0F;
 
   auto cursor_x = text_left_x;
+  auto plane_left = cursor_x;
+  auto bluetooth_left = cursor_x;
   auto wifi_left = cursor_x;
-  if (wifi_present) {
-    wifi_left = cursor_x - indicator_gap - wifi_indicator_width;
-    cursor_x = wifi_left;
+  if (plane_present) {
+    plane_left = cursor_x - indicator_gap - radio_indicator_width;
+    cursor_x = plane_left;
+  } else {
+    if (bluetooth_present) {
+      bluetooth_left = cursor_x - indicator_gap - radio_indicator_width;
+      cursor_x = bluetooth_left;
+    }
+    if (wifi_present) {
+      wifi_left = cursor_x - indicator_gap - wifi_indicator_width;
+      cursor_x = wifi_left;
+    }
   }
   auto battery_left = cursor_x;
   auto battery_text_left = cursor_x;
@@ -654,9 +748,18 @@ void StatusBarRenderer::render(auroreengine::gui_renderer &renderer,
       frame_w * layout.scale, frame_height * layout.scale, openxmb::xmb::glass::variant::regular,
       StatusBarMetrics::frame_radius(frame_height) * layout.scale, opacity, layout.scale);
 
-  if (wifi_present) {
-    draw_wifi_indicator(renderer, layout, wifi_left, icon_center_y,
-                        status.wifi_signal, opacity);
+  if (plane_present) {
+    draw_aeroplane_indicator(renderer, layout, plane_left, icon_center_y,
+                             opacity);
+  } else {
+    if (bluetooth_present) {
+      draw_bluetooth_indicator(renderer, layout, bluetooth_left,
+                               icon_center_y, opacity);
+    }
+    if (wifi_present) {
+      draw_wifi_indicator(renderer, layout, wifi_left, icon_center_y,
+                          status.wifi_signal, opacity);
+    }
   }
   if (battery_present) {
     draw_battery_indicator(renderer, layout, battery_left, icon_center_y,
@@ -678,16 +781,18 @@ void StatusBarRenderer::render(auroreengine::gui_renderer &renderer,
   }
   draw_label(time_text, text_left_x);
 
-  const auto angles = resolve_clock_hand_angles(time);
-  draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
-                  icon_radius, 0.0F, 2.0F * icon_scale, 2.6F * icon_scale,
-                  4.0F * icon_scale, {0.0F, 0.0F, 0.0F, 0.55F * opacity});
-  draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
-                  icon_radius, 0.0F, 0.0F, 5.2F * icon_scale,
-                  6.2F * icon_scale, {1.0F, 1.0F, 1.0F, 0.14F * opacity});
-  draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
-                  icon_radius, 0.0F, 0.0F, 2.6F * icon_scale, 4.0F * icon_scale,
-                  {1.0F, 1.0F, 1.0F, 0.96F * opacity});
+  if (status.analog_clock) {
+    const auto angles = resolve_clock_hand_angles(time);
+    draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
+                    icon_radius, 0.0F, 2.0F * icon_scale, 2.6F * icon_scale,
+                    4.0F * icon_scale, {0.0F, 0.0F, 0.0F, 0.55F * opacity});
+    draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
+                    icon_radius, 0.0F, 0.0F, 5.2F * icon_scale,
+                    6.2F * icon_scale, {1.0F, 1.0F, 1.0F, 0.14F * opacity});
+    draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
+                    icon_radius, 0.0F, 0.0F, 2.6F * icon_scale,
+                    4.0F * icon_scale, {1.0F, 1.0F, 1.0F, 0.96F * opacity});
+  }
 }
 
 bool StatusBarRenderer::render_local(
@@ -710,8 +815,9 @@ bool StatusBarRenderer::render_local(
   if(config::CONFIG.enabled("time.seconds",false))format+=":%S";
   if(config::CONFIG.preference("time.format","24-hour")=="12-hour")format+=" %p";
   std::array<char,64> formatted{};std::strftime(formatted.data(),formatted.size(),format.c_str(),&tm);
-  render(renderer, *local, opacity, formatted.data(),
-         polled_status_bar_status());
+  auto status = polled_status_bar_status();
+  status.analog_clock = config::CONFIG.enabled("status.analog.clock", false);
+  render(renderer, *local, opacity, formatted.data(), status);
   return true;
 }
 
