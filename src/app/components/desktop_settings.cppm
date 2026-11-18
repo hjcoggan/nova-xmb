@@ -905,15 +905,11 @@ export void activate(shell* shell,const openxmb::xmb::CatalogNode& node) {
             for(std::size_t idx=0;idx<found->size();++idx) {
                 const auto& net=(*found)[idx];
                 if(net.connected) initial=static_cast<unsigned>(idx);
+                // Only the name and its connection state belong in a picker.
+                // The old "(psk ****)" suffix was iwd diagnostic data, not a
+                // network name, and made a one-line slot wrap into three.
                 std::string label=net.ssid;
                 if(net.connected) label+=" [Connected]";
-                if(!net.security.empty() || !net.signal.empty()) {
-                    label+=" (";
-                    if(!net.security.empty()) label+=net.security;
-                    if(!net.security.empty() && !net.signal.empty()) label+=" ";
-                    if(!net.signal.empty()) label+=net.signal;
-                    label+=")";
-                }
                 labels.push_back(std::move(label));
             }
             labels.push_back("Enter SSID manually...");
@@ -947,7 +943,9 @@ export void activate(shell* shell,const openxmb::xmb::CatalogNode& node) {
             }
             std::vector<std::string> labels;
             for(const auto& d:*found) {
-                std::string label=d.name;
+                // A raw MAC address is private and wrapped mid-string on the
+                // panel. Show the device's name, or a numbered generic name.
+                std::string label=d.name.empty()?"Bluetooth device":d.name;
                 if(d.connected) label+=" [Connected]";
                 else if(d.paired) label+=" [Paired]";
                 labels.push_back(std::move(label));

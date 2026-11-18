@@ -18,6 +18,7 @@
 
 module;
 #include "openxmb/xmb/glass.hpp"
+#include "openxmb/xmb/scrolling_text.hpp"
 
 #include "dialog_text_layout.hpp"
 #include "../../localization/shell_locale.hpp"
@@ -27,6 +28,7 @@ module;
 #include <functional>
 #include <cmath>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -150,9 +152,11 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
         wrapped_pixels=pixels;wrapped_font=font;
         wrapped_choices.clear();row_heights.clear();
         for(const auto& entry:choices) {
-            auto lines=dialog_text::wrap(entry,available_width*canvas.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});
-            row_heights.push_back(line_height+(lines.size()-1)*pitch+12*ui);
-            wrapped_choices.push_back(std::move(lines));
+            // One row is one line. Long names (SSIDs, Bluetooth devices)
+            // used to wrap into several lines and scroll vertically; they
+            // now use the one horizontal scrolling-text slot instead.
+            wrapped_choices.push_back({entry});
+            row_heights.push_back(line_height+12*ui);
         }
     }
     float top=518-metrics.x;
@@ -168,8 +172,13 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
             sheet_w*pose.scale,sheet_h*pose.scale,glass::variant::regular,glass::card_radius,open_alpha);
     }
     if(!top_action.empty()) {
+        // A sheet title is one line. Wrapping it made "Select Wi-Fi Network"
+        // two ragged lines and pushed the first row down unpredictably.
         auto labels=dialog_text::wrap(top_action,available_width*canvas.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});
-        if(labels.size()>2){labels.resize(2);labels.back()=dialog_text::ellipsize(labels.back()+"…",available_width*canvas.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});}
+        if(labels.size()>1){
+            labels.resize(1);
+            labels.front()=dialog_text::ellipsize(labels.front()+"…",available_width*canvas.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});
+        }
         const float baseline=top_action_y*1080;
         for(std::size_t i=0;i<labels.size();++i)canvas.text(labels[i],x,baseline+i*pitch,24,{1,1,1,glass::text_secondary*open_alpha});
         top=std::max(top,baseline+(labels.size()-1)*pitch+metrics.y+24*ui);
@@ -202,11 +211,35 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
             canvas.rect(x-2.0F,y-metrics.x+(line_height-28.0F)*0.5F-1.0F,30,30,{1,1,1,0.55F*open_alpha},8);
             canvas.rect(x,y-metrics.x+(line_height-28.0F)*0.5F+1.0F,26,26,{swatches[i],open_alpha},6);
         }
-        const std::size_t start=focused?text_scroll_line:0;
         const auto& lines=wrapped_choices[i];
-        const auto count=std::min(lines.size()-start,selected_page_lines);
-        for(std::size_t line=0;line<count;++line)
-            canvas.text(lines[start+line],x+swatch_inset,y+line*pitch,26,{1,1,1,glass::text_primary*open_alpha});
+        const std::string_view line=lines.empty()?std::string_view{}:std::string_view(lines.front());
+        const auto measure=[&](std::string_view text){
+            return renderer.text_width_pixels(text,pixels)/canvas.scale;
+        };
+        const auto fitting=openxmb::xmb::ui::fitting_count(
+            line,static_cast<float>(available_width),measure);
+        if(focused) {
+            // One slot for the whole sheet: it resets itself whenever the
+            // focused row changes, and only the focused row animates.
+            static openxmb::xmb::ui::scrolling_text slot;
+            static std::string_view bound;
+            if(bound.data()!=line.data()||bound.size()!=line.size()||!slot.focused()) {
+                slot.set_text(line,fitting,true,now_ms);
+                bound=line;
+            }
+            const auto glyph=fitting?measure(line.substr(0,1)):1.0F;
+            const auto run=slot.sample(now_ms,glyph);
+            canvas.text(line.substr(run.first,run.count),
+                x+swatch_inset-run.offset_px,y,26,{1,1,1,glass::text_primary*open_alpha});
+        } else {
+            auto shown=std::string(line);
+            if(fitting>0&&shown.size()>fitting) {
+                shown.resize(fitting);
+                while(!shown.empty()&&(static_cast<unsigned char>(shown.back())&0xC0)==0x80) shown.pop_back();
+                shown=shown.empty()?"\xE2\x80\xA6":shown+"\xE2\x80\xA6";
+            }
+            canvas.text(shown,x+swatch_inset,y,26,{1,1,1,glass::text_primary*open_alpha});
+        }
         y+=row_heights[i];
     }
     renderer.reset_clip();
