@@ -206,3 +206,42 @@ Follow-up polish and console-only trimming on `ui-tidy/audit`:
 | Launch-error `message_overlay` | [polish-09-launch-error.png](ui-audit-shots/polish-09-launch-error.png) | Exercised via synthetic `~/.local/state/nova/last-launch-error.json` (`Sample Game`): renders `Could Not Start Sample Game` with `A OK  B Back`, dismissed with A. |
 
 Closing state on device: Screen Brightness restored to `50` (`1723/3445` sysfs, `~/.local/state/nova/brightness` = `50`), Show FPS Off, Analog Clock Off, menu on Switch crossbar, `nova-session` active, `systemctl --failed` empty. Aeroplane glyph (toggling radios drops SSH) and empty library columns (skipped by design in `main_menu.cpp`) remain code-only.
+
+## Status bar icons, theming consistency, library management & refresh rate controls
+
+Follow-up refinement round on `ui-tidy/audit`:
+
+1. **Tabler status bar icons, sizing & layout (`status_bar.hpp`, `status_bar.cpp`, `status_bar_renderer.cppm`, `shell.cpp`)**:
+   - Replaced custom vector battery/Wi-Fi/Bluetooth/aeroplane indicators with 15 crisp white 128x128 Tabler PNG icons (`plane-tilt`, `bluetooth`, `bluetooth-connected`, `battery-exclamation`, `battery-1`..`4`, `battery-charging`, `battery-charging-2`, `wifi-0`..`2`, `wifi`, `wifi-off`) and removed the battery percentage text label.
+   - Kept Wi-Fi and Bluetooth icons white (matching the date text), scaled icon glyph heights (`22` logical px visual height) to match the date digit height, and widened spacing (`20` logical px gap, `22` logical px minimum end padding).
+   - Added `/sys/class/bluetooth/hciN:handle` connection detection, external power supply online check (`charging` / `battery-charging-2` at 100%), and non-blocking default-route + TCP 443 internet reachability check (`wifi-off`) with socket calls kept in `status_bar.cpp` to avoid Clang C++23 module fortify linkage issues (`desktop_settings_posix.cpp` similarly isolates `::open`).
+2. **Active theme consistency & loading screen cleanup (`glass.hpp`, `glass_draw.hpp`, `nova/aurore-engine.patch`, `launch_overlay.cpp`, `pause_overlay.cpp`, `progress_overlay.cpp`, `shell.cpp`)**:
+   - Wired active theme colors into `glass::set_theme_colors(...)` and AuroreEngine's glass fragment shader so sheets, buttons, pause/progress overlays, and sliders follow the active device theme (no disconnected blue/grey tint).
+   - Updated `launch_overlay` to use the active theme gradient/glow and omit the duplicate game title below cover logo art (retaining it only as fallback when artwork is missing).
+3. **Settings column horizontal spring (`settings_scene_renderer.cppm`, `main_menu.cpp`)**:
+   - Wired `x_shift`, `alpha_multiplier`, and `lens_focus` (`focus_tracker`) into `SettingsSceneRenderer` so the Settings column slides and bounces consistently with the game columns.
+4. **Hide Games & System Settings > Hidden Games (`applications_menu.cpp`, `desktop_settings.cppm`, `desktop_settings_catalog.hpp`)**:
+   - Added `Hide` to game Options (`Y`) menu (preserving custom `libraryOrder` slots on subsequent `Move` operations) and `System Settings > Hidden Games` with `Play Game`, `Restore to Library` (restoring original position), and `Cancel`.
+5. **Sort Game Library (`applications_menu.cpp`, `desktop_settings.cppm`, `desktop_settings_catalog.hpp`)**:
+   - Added `System Settings > Sort Game Library` (`Alphabetically`, `Date Added` via manifest mtime) affecting all four game categories (`switch`, `windows`, `linux`, `android`).
+6. **Display Settings > Rearrange Status Bar (`status_bar.hpp`, `status_bar.cpp`, `status_bar_renderer.cppm`, `desktop_settings.cppm`)**:
+   - Added `Display Settings > Rearrange Status Bar` to interactively reorder `Battery`, `Wi-Fi`, `Bluetooth`, and `Clock` (plus `Reset to Default`) with live status bar updates and round-trip unit tests in `tests/xmb/status_bar_tests.cpp`.
+7. **60 fps launcher cap & Display Settings > In-Game Refresh Rate (`display_refresh.cpp`, `shell.cpp`, `main.cpp`, `utils.cppm`, `desktop_settings.cppm`)**:
+   - Capped `XMS.bin` launcher frame rate at `60` fps in `main.cpp` and `shell.cpp` and set launcher Sway output mode to `60 Hz` (`1280x960@59.999Hz`).
+   - Added `Display Settings > In-Game Refresh Rate` (`30 Hz`, `60 Hz`, `90 Hz`, `120 Hz`, plus `VRR` only when Sway `adaptive_sync` is supported), switching Sway output mode and passing `NOVA_REFRESH_RATE` / `DXVK_FRAME_RATE` on game launch, then restoring `60 Hz` when the game exits.
+
+### Device verification on Retroid Pocket Nova (`1280x960`)
+
+| Check | Screenshot | Result |
+|---|---|---|
+| Status bar icons, scaling & spacing | [ui-v2-statusbar-final.png](ui-audit-shots/ui-v2-statusbar-final.png) | White `battery-4`, `wifi`, `bluetooth` icons match date digit height without `%` text; airy consistent spacing. |
+| Game Options (`Y`) with `Hide` & theme tint | [ui-v2-game-options-themed.png](ui-audit-shots/ui-v2-game-options-themed.png) | `Start`, `Move`, `Hide`, `Information` rendered inside theme-matched glass sheet; tested hide + restore flow cleanly. |
+| System Update popup theming | [ui-v2-sysupdate-themed.png](ui-audit-shots/ui-v2-sysupdate-themed.png) | Confirmation sheet & button highlight match active crimson theme with zero blue/grey mismatch. |
+| 60 fps launcher cap (`Show FPS`) | [ui-v2-fps-cap-60.png](ui-audit-shots/ui-v2-fps-cap-60.png) | `FPS: 59.49` even with user `max-fps: 120`; Show FPS restored to Off afterward. |
+| Rearrange Status Bar | [ui-v2-statusbar-reordered.png](ui-audit-shots/ui-v2-statusbar-reordered.png) | Moving `Battery` right updates live bar immediately (`Wi-Fi`, `Battery`, `Bluetooth`, `Clock`); reset cleanly to default afterward. |
+| In-Game Refresh Rate selector | [ui-v2-refresh-choices.png](ui-audit-shots/ui-v2-refresh-choices.png) | Exposes `30 Hz`, `60 Hz`, `90 Hz`, `120 Hz` (VRR omitted because `DSI-1` reports `adaptive_sync: false`). |
+| Launch overlay theming & logo-only card | [ui-v2-launch-themed-nodupe.png](ui-audit-shots/ui-v2-launch-themed-nodupe.png) | Backdrop matches active purple theme and displays cover art card without duplicate title text; Sway switched to `120000` mHz on launch and back to `59999` mHz on quit. |
+| Pause overlay theming | [ui-v2-pause-themed.png](ui-audit-shots/ui-v2-pause-themed.png) | Pause sheet, `Resume` highlight, and `Volume`/`Brightness` sliders match active purple theme. |
+| Hidden Games actions (`Play Game` / `Restore`) | [ui-v2-hidden-games-actions.png](ui-audit-shots/ui-v2-hidden-games-actions.png) | Hidden Games lists hidden titles with `Play Game`, `Restore to Library`, and `Cancel`. |
+| Sort Game Library (`Date Added`) | [ui-v2-sort-date-added.png](ui-audit-shots/ui-v2-sort-date-added.png) | Re-sorts Switch category by manifest mtime (`Need for Speed Hot Pursuit`, `Super Mario Bros. Wonder`, `APE OUT`); restored to `Alphabetically` afterward. |
+
