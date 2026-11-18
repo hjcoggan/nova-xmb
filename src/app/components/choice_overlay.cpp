@@ -159,29 +159,40 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
             row_heights.push_back(line_height+12*ui);
         }
     }
-    float top=518-metrics.x;
-    {
-        // Size the sheet to its list: a title if there is one, then the rows,
-        // never taller than the screen.
-        float rows_height=0;
-        for(const auto row:row_heights)rows_height+=row;
-        const float sheet_top=(top_action.empty()?top:top_action_y*1080-metrics.x)-34.0F;
-        const float sheet_bottom=std::min(canvas.visible_bottom()-hint_reserve,top+rows_height+glass::card_padding);
-        const float sheet_w=357.0F+58.0F,sheet_h=sheet_bottom-sheet_top;
-        canvas.glass(x-36.0F+sheet_w*(1.0F-pose.scale)*0.5F,sheet_top+sheet_h*(1.0F-pose.scale)*0.5F,
-            sheet_w*pose.scale,sheet_h*pose.scale,glass::variant::regular,glass::card_radius,open_alpha);
-    }
+    std::vector<std::string> title_labels;
+    float top = 518.0F - metrics.x;
+    float sheet_top = top - 34.0F;
     if(!top_action.empty()) {
         // A sheet title is one line. Wrapping it made "Select Wi-Fi Network"
         // two ragged lines and pushed the first row down unpredictably.
-        auto labels=dialog_text::wrap(top_action,available_width*canvas.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});
-        if(labels.size()>1){
-            labels.resize(1);
-            labels.front()=dialog_text::ellipsize(labels.front()+"…",available_width*canvas.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});
+        const float title_pixels = 24.0F * canvas.scale * ui;
+        const auto title_metrics = renderer.text_line_metrics_pixels(title_pixels) / canvas.scale;
+        title_labels = dialog_text::wrap(top_action, available_width * canvas.scale,
+            [&](auto v){ return renderer.text_width_pixels(v, title_pixels); });
+        if(title_labels.size() > 1) {
+            title_labels.resize(1);
+            title_labels.front() = dialog_text::ellipsize(title_labels.front() + "...", available_width * canvas.scale,
+                [&](auto v){ return renderer.text_width_pixels(v, title_pixels); });
         }
-        const float baseline=top_action_y*1080;
-        for(std::size_t i=0;i<labels.size();++i)canvas.text(labels[i],x,baseline+i*pitch,24,{1,1,1,glass::text_secondary*open_alpha});
-        top=std::max(top,baseline+(labels.size()-1)*pitch+metrics.y+24*ui);
+        const float baseline = top_action_y * 1080.0F;
+        sheet_top = (baseline - title_metrics.x) - 34.0F;
+        top = baseline + title_metrics.y + 24.0F * ui;
+    }
+    {
+        // Size the sheet to its list: a title if there is one, then the rows,
+        // never taller than the screen.
+        float rows_height = 0.0F;
+        for(const auto row : row_heights) rows_height += row;
+        const float sheet_bottom = std::min(canvas.visible_bottom() - hint_reserve, top + rows_height + glass::card_padding);
+        const float sheet_w = 357.0F + 58.0F, sheet_h = sheet_bottom - sheet_top;
+        canvas.glass(x - 36.0F + sheet_w * (1.0F - pose.scale) * 0.5F, sheet_top + sheet_h * (1.0F - pose.scale) * 0.5F,
+            sheet_w * pose.scale, sheet_h * pose.scale, glass::variant::regular, glass::card_radius, open_alpha);
+    }
+    if(!title_labels.empty()) {
+        const float baseline = top_action_y * 1080.0F;
+        for(std::size_t i = 0; i < title_labels.size(); ++i) {
+            canvas.text(title_labels[i], x, baseline + static_cast<float>(i) * pitch, 24, {1, 1, 1, glass::text_secondary * open_alpha});
+        }
     }
     const float bottom=std::min(1000.0F,canvas.visible_bottom()-hint_reserve-glass::card_padding),viewport=std::max(line_height,bottom-top);
     const auto window=dialog_text::choice_window(row_heights,selection_index,viewport,first_visible);
@@ -217,18 +228,14 @@ void choice_overlay::render(auroreengine::gui_renderer& renderer, class shell* x
             return renderer.text_width_pixels(text,pixels)/canvas.scale;
         };
         const auto fitting=openxmb::xmb::ui::fitting_count(
-            line,static_cast<float>(available_width),measure);
+            line,static_cast<float>(available_width)-swatch_inset,measure);
         if(focused) {
-            // One slot for the whole sheet: it resets itself whenever the
-            // focused row changes, and only the focused row animates.
-            static openxmb::xmb::ui::scrolling_text slot;
-            static std::string_view bound;
-            if(bound.data()!=line.data()||bound.size()!=line.size()||!slot.focused()) {
-                slot.set_text(line,fitting,true,now_ms);
-                bound=line;
+            if(focus_scroll_text!=line||!focus_scroll.focused()) {
+                focus_scroll_text.assign(line);
+                focus_scroll.set_text(focus_scroll_text,fitting,true,now_ms);
             }
             const auto glyph=fitting?measure(line.substr(0,1)):1.0F;
-            const auto run=slot.sample(now_ms,glyph);
+            const auto run=focus_scroll.sample(now_ms,glyph);
             canvas.text(line.substr(run.first,run.count),
                 x+swatch_inset-run.offset_px,y,26,{1,1,1,glass::text_primary*open_alpha});
         } else {

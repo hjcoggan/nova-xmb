@@ -117,7 +117,7 @@ namespace app {
             [&](auto v) { return renderer.text_width_pixels(v, title_pixels); });
         if(title_lines.size() > 2) {
             title_lines.resize(2);
-            title_lines.back() = dialog_text::ellipsize(title_lines.back() + "…", content_width * c.scale,
+            title_lines.back() = dialog_text::ellipsize(title_lines.back() + "...", content_width * c.scale,
                 [&](auto v) { return renderer.text_width_pixels(v, title_pixels); });
         }
 

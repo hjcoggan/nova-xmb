@@ -106,13 +106,13 @@ namespace app {
         if(wrapped_pixels!=pixels||wrapped_font!=font) {
             wrapped_pixels=pixels;wrapped_font=font;
             title_lines=dialog_text::wrap(title,content_width*c.scale,[&](auto v){return renderer.text_width_pixels(v,28*c.scale*ui);});
-            if(title_lines.size()>2) {title_lines.resize(2);title_lines.back()=dialog_text::ellipsize(title_lines.back()+"…",content_width*c.scale,[&](auto v){return renderer.text_width_pixels(v,28*c.scale*ui);});}
+            if(title_lines.size()>2) {title_lines.resize(2);title_lines.back()=dialog_text::ellipsize(title_lines.back()+"...",content_width*c.scale,[&](auto v){return renderer.text_width_pixels(v,28*c.scale*ui);});}
             body_lines=dialog_text::wrap(message,content_width*c.scale,[&](auto v){return renderer.text_width_pixels(v,pixels);});
             choice_lines.clear();
             const float width=std::max(80.0f,choice_slot_w-36.0f)*c.scale;
             for(const auto& choice:choices) {
                 auto lines=dialog_text::wrap(choice,width,[&](auto v){return renderer.text_width_pixels(v,26*c.scale*ui);});
-                if(lines.size()>2){lines.resize(2);lines.back()=dialog_text::ellipsize(lines.back()+"…",width,[&](auto v){return renderer.text_width_pixels(v,26*c.scale*ui);});}
+                if(lines.size()>2){lines.resize(2);lines.back()=dialog_text::ellipsize(lines.back()+"...",width,[&](auto v){return renderer.text_width_pixels(v,26*c.scale*ui);});}
                 choice_lines.push_back(std::move(lines));
             }
         }
@@ -210,7 +210,7 @@ namespace app {
         const auto previous_scale = renderer.text_scale;
         renderer.text_scale = 1.0f;
         xmb->render_hint_bar(renderer, std::array{
-            std::pair{action::ok, "Enter"},
+            std::pair{action::ok, choices.empty() ? "OK" : "Select"},
             std::pair{cancelable ? action::cancel : action::none, "Back"}
         });
         renderer.text_scale = previous_scale;

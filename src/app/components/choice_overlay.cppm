@@ -23,6 +23,7 @@
 
 module;
 #include "openxmb/xmb/glass.hpp"
+#include "openxmb/xmb/scrolling_text.hpp"
 
 #include <chrono>
 #include <functional>
@@ -89,6 +90,8 @@ export class choice_overlay : public component, public action_receiver {
         std::vector<glm::vec3> swatches;
         std::string top_action;
         float top_action_y = 390.0F / 1080.0F;
+        openxmb::xmb::ui::scrolling_text focus_scroll;
+        std::string focus_scroll_text;
 };
 
 }

@@ -18,6 +18,7 @@
 
 module;
 #include "openxmb/xmb/pause_backdrop.hpp"
+#include "openxmb/xmb/ui_tokens.hpp"
 #include "openxmb/xmb/child_process.hpp"
 #include "openxmb/xmb/ipc_message.hpp"
 #include <future>
@@ -1973,22 +1974,28 @@ namespace app
             }
         }
 
-        float debug_y = 0.0;
-        if(config::CONFIG.showFPS) {
-            renderer.draw_text("FPS: {:.2f}"_(win->currentFPS), 0, debug_y, 0.05f, glm::vec4(0.7f, 0.7f, 0.7f, 1.0f));
-            debug_y += 0.025f;
-        }
-        if(config::CONFIG.showMemory) {
-            vk::DeviceSize budget{}, usage{};
-            for(const auto& b : allocator.getHeapBudgets()) {
-                budget += b.budget;
-                usage += b.usage;
+        if(config::CONFIG.showFPS || config::CONFIG.showMemory) {
+            const overlay_canvas canvas(renderer);
+            const float fw = static_cast<float>(renderer.frame_size.width);
+            const float fh = static_cast<float>(renderer.frame_size.height);
+            const float inset_x = openxmb::xmb::ui::safe_inset * canvas.scale / fw;
+            float debug_y = openxmb::xmb::ui::safe_inset * canvas.scale / fh;
+            if(config::CONFIG.showFPS) {
+                renderer.draw_text("FPS: {:.2f}"_(win->currentFPS), inset_x, debug_y, 0.05f, glm::vec4(0.7f, 0.7f, 0.7f, 1.0f));
+                debug_y += 0.025f;
             }
-            constexpr double mb = 1024.0*1024.0;
-            auto u = static_cast<double>(usage)/mb;
-            auto b = static_cast<double>(budget)/mb;
-            renderer.draw_text("Video Memory: {:.2f}/{:.2f} MB"_(u, b), 0, debug_y, 0.05f, glm::vec4(0.7f, 0.7f, 0.7f, 1.0f));
-            debug_y += 0.025f;
+            if(config::CONFIG.showMemory) {
+                vk::DeviceSize budget{}, usage{};
+                for(const auto& b : allocator.getHeapBudgets()) {
+                    budget += b.budget;
+                    usage += b.usage;
+                }
+                constexpr double mb = 1024.0*1024.0;
+                auto u = static_cast<double>(usage)/mb;
+                auto b = static_cast<double>(budget)/mb;
+                renderer.draw_text("Video Memory: {:.2f}/{:.2f} MB"_(u, b), inset_x, debug_y, 0.05f, glm::vec4(0.7f, 0.7f, 0.7f, 1.0f));
+                debug_y += 0.025f;
+            }
         }
     }
 

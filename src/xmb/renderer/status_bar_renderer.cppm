@@ -693,7 +693,9 @@ void StatusBarRenderer::render(auroreengine::gui_renderer &renderer,
 
   const auto icon_center_x =
       StatusBarMetrics::frame_right() - end_pad - icon_radius;
-  const auto text_right_x = icon_center_x - icon_radius - 10.0F;
+  const auto text_right_x = status.analog_clock
+                                ? (icon_center_x - icon_radius - 10.0F)
+                                : (StatusBarMetrics::frame_right() - end_pad);
   const auto text_left_x = text_right_x - text_w_logical;
 
   // The indicators grow the glass frame leftwards from the date/time; a value
