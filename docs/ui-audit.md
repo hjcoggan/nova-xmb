@@ -176,3 +176,33 @@ After the feedback build: `nix build .#openxmb-tests --override-input nova-xmb
 path:…` — 52/52 pass. FPS 118.76 on the crossbar with Show FPS on (no worse
 than the 99.43 baseline). Show FPS is off again, brightness 50%, `nova-session`
 active with no failed units, and the temporary long-title game removed.
+
+## Polish & console-only cleanup round (`5a8ce92`, `1a043ea`, `a2a7e6e`)
+
+Follow-up polish and console-only trimming on `ui-tidy/audit`:
+
+1. **UI polish (`5a8ce92`)**:
+   - `status_bar_renderer.cppm`: remove reserved analog-clock gap from `text_right_x` when `status.analog_clock` is `false` so right padding matches left padding.
+   - `choice_overlay.cpp` / `.cppm`: lay out title wrapping before sheet sizing (removing the ~100 px dead gap below sheet titles), subtract `swatch_inset` in `ui::fitting_count`, and move focus scroll state into member fields.
+   - `message_overlay.cpp`: hint bar `action::ok` reads `"OK"` (single button) or `"Select"` (choices) instead of `"Enter"`.
+   - `choice_overlay.cpp`, `message_overlay.cpp`, `progress_overlay.cpp`: replace missing-glyph `…` (U+2026) with `"..."`.
+   - `shell.cpp`: inset FPS and GPU memory debug text by `openxmb::xmb::ui::safe_inset`.
+2. **Console-only cleanup (`1a043ea`, `a2a7e6e`)**:
+   - Dropped unused desktop viewers, media players (`src/music/`, `src/photos/`, `src/documents/`, `src/video*.cpp`, `src/programs/*_viewer.cppm`, `music_player`, `video_player`, `about`, `integration_center`, `news_display`), `src/integrations/*`, `src/modules/{browser,disc,libretro}.cppm`, legacy `src/menu/{files,users,settings}_menu.*`, and their CMake/test targets while keeping `pkgs/openxmb/default.nix` and `tests.nix` compatible.
+   - Trimmed `desktop_settings_catalog.hpp` to the 21 console rows, removed desktop-only handlers/`binding_capture` from `desktop_settings.cppm`, made console layout unconditional in `main_menu.cpp` and `settings_scene_renderer.cppm`, and added [`docs/PROVENANCE.md`](PROVENANCE.md).
+
+### Device verification at `a2a7e6e` (1280x960 panel)
+
+| Check | Screenshot | Result |
+|---|---|---|
+| Status bar right padding (Analog Clock Off) | [polish-01-crossbar-clock-off.png](ui-audit-shots/polish-01-crossbar-clock-off.png) | Right padding matches left padding; Switch crossbar clean. |
+| Game Information hint bar | [polish-02-game-info.png](ui-audit-shots/polish-02-game-info.png) | Hint bar shows `A OK  B Back` (no `"Enter"`). |
+| Theme > Colour swatches | [polish-03-theme-colour.png](ui-audit-shots/polish-03-theme-colour.png) | Colour swatches and labels align cleanly inside `choice_overlay`. |
+| Multi-choice `message_overlay` (System Update) | [polish-04-system-update-prompt.png](ui-audit-shots/polish-04-system-update-prompt.png) | Hint bar shows `A Select  B Back`; cancelled safely with B. |
+| Show FPS inset & Analog Clock On | [polish-05-fps-inset-clock-on.png](ui-audit-shots/polish-05-fps-inset-clock-on.png) | `FPS: 118.74` inset by `ui::safe_inset`, clear of `(0,0)` and rounded corners; analog face aligned. Both restored to Off. |
+| Wi-Fi picker sheet title & `...` | [polish-06-wifi-sheet.png](ui-audit-shots/polish-06-wifi-sheet.png) | `Wi-Fi Networks` sits snugly above rows with no ~100 px dead gap; long SSID truncates with `...`. (Private SSIDs painted out.) |
+| Bluetooth picker sheet title | [polish-07-bluetooth-sheet.png](ui-audit-shots/polish-07-bluetooth-sheet.png) | `Bluetooth Devices` sits snugly above `Bluetooth device 1..4` with no dead gap and no MAC addresses. |
+| System Settings (console rows) | [polish-08-system-settings.png](ui-audit-shots/polish-08-system-settings.png) | Shows only `Language` and `Rescan Game Library`. |
+| Launch-error `message_overlay` | [polish-09-launch-error.png](ui-audit-shots/polish-09-launch-error.png) | Exercised via synthetic `~/.local/state/nova/last-launch-error.json` (`Sample Game`): renders `Could Not Start Sample Game` with `A OK  B Back`, dismissed with A. |
+
+Closing state on device: Screen Brightness restored to `50` (`1723/3445` sysfs, `~/.local/state/nova/brightness` = `50`), Show FPS Off, Analog Clock Off, menu on Switch crossbar, `nova-session` active, `systemctl --failed` empty. Aeroplane glyph (toggling radios drops SSH) and empty library columns (skipped by design in `main_menu.cpp`) remain code-only.
