@@ -111,8 +111,6 @@ namespace app
             void reload_language();
             void reload_menu();
             void open_panel(const std::string& name);
-            bool set_audio_device(const std::string& device);
-            std::string audio_device_name() const { return active_audio_device; }
             void switch_profile(const std::filesystem::path& path);
             void apply_theme(const openxmb::themes::AppliedTheme& theme);
             std::shared_ptr<openxmb::themes::ThemeLibrary> theme_library();
@@ -491,11 +489,6 @@ namespace app
             constexpr static auto controller_button_input_duration = std::chrono::milliseconds(200);
 
             // state
-            std::string active_audio_device;
-            bool desktop_preferences_applied=false;
-            bool desktop_defaults_captured=false;
-            unsigned desktop_default_flags{};
-            int desktop_default_x{},desktop_default_y{},desktop_default_width{},desktop_default_height{};
             std::array<bool,513> held_scancodes{};
             ButtonTiming button_timing;
             time_point last_activity=std::chrono::steady_clock::now();

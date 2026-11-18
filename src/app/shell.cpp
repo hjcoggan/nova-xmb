@@ -1986,14 +1986,8 @@ namespace app
         load(cancel_sound,{"NSE.ui.Cancel.wav","NSE.ui.Cancel.ogg","cancel.wav"});
         load(back_sound,{"NSE.clicker.Cancel.wav","NSE.clicker.Cancel.ogg","back.wav"});
     }
-    bool shell::set_audio_device(const std::string& name) {
-        active_audio_device = name;
-        return false;
-    }
     void shell::open_panel(const std::string& name) {
-        if(name.starts_with("bind.")) {
-            emplace_overlay<app::binding_capture>(name.substr(5));
-        } else if(name == "themes") {
+        if(name == "themes") {
             emplace_overlay<programs::theme_manager>(*loader, theme_library(),
                 [this](const openxmb::themes::AppliedTheme& value) { apply_theme(value); },
                 [] { return nlohmann::json::parse(config::CONFIG.shell_snapshot()); });
@@ -2008,7 +2002,6 @@ namespace app
     }
 
     void shell::refresh_desktop_preferences() {
-        desktop_preferences_applied=false;
         // Profile and reset callbacks run in input handling, before the engine
         // acquires a swapchain image. Rebuild here, never inside render/tick.
             if(win->config.sampleCount!=config::CONFIG.sampleCount) {
@@ -2222,27 +2215,6 @@ namespace app
     }
 
     void shell::tick() {
-        if(!desktop_preferences_applied) {
-            desktop_preferences_applied=true;
-            if(!win->config.headless) {
-                if(!desktop_defaults_captured) {
-                    desktop_defaults_captured=true;desktop_default_flags=SDL_GetWindowFlags(win->win.get())&(SDL_WINDOW_FULLSCREEN_DESKTOP|SDL_WINDOW_FULLSCREEN);
-                    SDL_GetWindowPosition(win->win.get(),&desktop_default_x,&desktop_default_y);
-                    SDL_GetWindowSize(win->win.get(),&desktop_default_width,&desktop_default_height);
-                }
-                if(const auto name=config::CONFIG.preference("system.name","OpenXMB system");!name.empty())SDL_SetWindowTitle(win->win.get(),name.c_str());
-                const auto mode=config::CONFIG.preference("display.mode");
-                const Uint32 target_flags=mode.empty()?desktop_default_flags:mode=="Windowed"?0:mode=="Borderless"?SDL_WINDOW_FULLSCREEN_DESKTOP:SDL_WINDOW_FULLSCREEN;
-                SDL_SetWindowFullscreen(win->win.get(),target_flags);
-                if(config::CONFIG.preference("display.monitor").empty()&&target_flags==0)SDL_SetWindowPosition(win->win.get(),desktop_default_x,desktop_default_y);
-                if(config::CONFIG.preference("display.resolution").empty()){SDL_SetWindowDisplayMode(win->win.get(),nullptr);if(target_flags==0)SDL_SetWindowSize(win->win.get(),desktop_default_width,desktop_default_height);}
-                if(const auto monitor=config::CONFIG.preference("display.monitor");!monitor.empty()) {SDL_Rect bounds{};if(SDL_GetDisplayBounds(static_cast<int>(config::CONFIG.number("display.monitor",0)),&bounds)==0)SDL_SetWindowPosition(win->win.get(),bounds.x,bounds.y);}
-                if(const auto resolution=config::CONFIG.preference("display.resolution");!resolution.empty()) {const auto x=resolution.find('x');if(x!=std::string::npos)try{SDL_DisplayMode display{};display.w=std::stoi(resolution.substr(0,x));display.h=std::stoi(resolution.substr(x+1));if(display.w>0&&display.h>0){SDL_SetWindowDisplayMode(win->win.get(),&display);SDL_SetWindowSize(win->win.get(),display.w,display.h);}}catch(const std::exception&) {spdlog::warn("Ignoring invalid saved resolution");}}
-                const auto requested_device=config::CONFIG.preference("audio.device");
-                const auto wanted_device=requested_device=="System Default"?std::string{}:requested_device;
-                if(wanted_device!=active_audio_device)set_audio_device(wanted_device);
-            }
-        }
         poll_pause_ipc();
         const bool child_active=menu::has_active_child()&&!has_pause_overlay();
         const bool has_input_focus=win->config.headless||(SDL_GetWindowFlags(win->win.get())&SDL_WINDOW_INPUT_FOCUS)!=0;

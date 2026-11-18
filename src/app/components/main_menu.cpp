@@ -819,7 +819,7 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
         }
         last_selected = selected;
         last_selected_menu_item = menus[static_cast<std::size_t>(selected)]->get_selected_submenu();
-    } else if(config::CONFIG.console_mode()) {
+    } else {
         // A console opens on its games.
         for(std::size_t i = 0; i < menus.size(); ++i) {
             if(const auto* column=dynamic_cast<menu::library_menu*>(menus[i].get())) {
@@ -836,9 +836,7 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
     const auto catalog_path = asset_directory / "catalog/en.json";
     if(auto loaded = openxmb::xmb::load_catalog_file(catalog_path); loaded) {
         settings_catalog.emplace(std::move(*loaded.value));
-        // In console mode populate() builds the short handheld layout.
-        desktop_settings::populate(*settings_catalog, openxmb::localization::shell_locale::translate,
-            config::CONFIG.console_mode());
+        desktop_settings::populate(*settings_catalog, openxmb::localization::shell_locale::translate, true);
         if(auto created = openxmb::xmb::SettingsCatalogController::create(*settings_catalog); created) {
             settings_controller.emplace(std::move(*created.controller));
             std::unordered_set<std::string> loaded_icon_refs;
@@ -1831,10 +1829,8 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
         auto extent = active ? kActiveCategoryIconExtent : kInactiveCategoryIconExtent;
         // On the console the category icons sit a little smaller, so the
         // glass lens of the selected row below has room.
-        if(config::CONFIG.console_mode()) {
-            extent *= active ? 0.80 : 0.85;
-            center_y -= active ? 14.0 : 8.0;
-        }
+        extent *= active ? 0.80 : 0.85;
+        center_y -= active ? 14.0 : 8.0;
         auto alpha = active ? 0.90 : 0.85;
 
         if(active) {
@@ -1845,20 +1841,9 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
             alpha *= 1.0 - chrome_transition;
         }
 
-        // The PSN sphere fills substantially more of its source canvas than
-        // the numbered icon family. xmb-web measures a 0.68 correction.
-        if(index == 8) {
-            extent *= 0.68;
-        }
-
         draw_icon(renderer, menus[index]->get_icon(),
             menus[index]->get_glass_icon(), layout,
             center_x, center_y, extent, alpha);
-
-        if(active && !config::CONFIG.console_mode()) {
-            canvas.text(menus[index]->get_name(),center_x,kCategoryLabelY+18,24,
-                {1,1,1,static_cast<float>(0.95*(1.0-0.55*chrome_transition))},0,true);
-        }
     }
 
     const auto render_item_rail = [&](const menu::menu& menu,
@@ -1922,7 +1907,7 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
                 return static_cast<double>(renderer.text_width_pixels(text,
                     static_cast<float>(SettingsSceneMetrics::active_label_size * layout.scale))) / layout.scale;
             };
-            if(focused && config::CONFIG.console_mode()) {
+            if(focused) {
                 // The focused row rests on a lens of clear glass; while it is
                 // being moved, on a lit capsule. Same shape in every column.
                 double text_right = std::min(label_left + measure_label(entry.get_name()), label_right_edge);
@@ -1951,7 +1936,7 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
             }
             // On the console a square icon is fitted to the same box as a
             // logo: its height is the box's height.
-            const auto icon_extent = (config::CONFIG.console_mode() && !entry.has_custom_icon())
+            const auto icon_extent = !entry.has_custom_icon()
                 ? openxmb::xmb::SelectionLens::box_height(extent) : extent;
             draw_icon(renderer, entry.get_icon(), entry.get_glass_icon(), layout,
                 SettingsSceneMetrics::icon_center_x + x_shift, center_y, icon_extent, alpha,
@@ -1959,8 +1944,7 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
 
             const auto& icon_tex = entry.get_icon();
             // Covers are cards wider than an icon; their labels move right.
-            const double wide_label_shift = config::CONFIG.console_mode() ? column_label_shift
-                : (entry.has_custom_icon() ? openxmb::xmb::SelectionLens::label_shift : 0.0);
+            const double wide_label_shift = column_label_shift;
             const auto label_size = focused ? SettingsSceneMetrics::active_label_size : SettingsSceneMetrics::inactive_label_size;
             const auto text_value = focused ? 1.0f : 235.0f / 255.0f;
             const float item_pulse = 0.8F + 0.4F * std::sin(static_cast<float>(seconds_from_time_point(now)) * 1.848F);

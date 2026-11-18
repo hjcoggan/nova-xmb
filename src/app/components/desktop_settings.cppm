@@ -6,7 +6,6 @@ module;
 #include "../input_bindings.hpp"
 #include "openxmb/desktop/library.hpp"
 #include "openxmb/themes/library.hpp"
-#include <SDL2/SDL_mixer.h>
 #include <SDL2/SDL_image.h>
 #include <cctype>
 extern "C" {
@@ -16,7 +15,6 @@ extern "C" {
 #include <nlohmann/json.hpp>
 #include <cstdio>
 #include <cstdlib>
-#include <SDL2/SDL.h>
 #undef main
 #include <algorithm>
 #include <array>
@@ -61,44 +59,6 @@ import :message_overlay;
 import :progress_overlay;
 import :text_entry;
 import :xmb_presentation;
-
-namespace app {
-export class binding_capture final : public component,public event_receiver {
-public:
-    explicit binding_capture(std::string key) : key_(std::move(key)) {}
-    float typography_scale() const override {return 2.5F;}
-    result on_event(const event& input) override {
-        if(input.action==action::cancel) return result::close|result::back_sound;
-
-        if(!armed_) return result::success;
-        int code=-1;
-        if(key_.starts_with("pad.")) {if(const auto* button=input.get<events::controller_button_down>())code=static_cast<int>(button->button);}
-        else if(const auto* key=input.get<events::key_down>())code=static_cast<int>(key->keycode);
-        if(code<0) return result::success;
-        input_bindings::assign(config::CONFIG.preferences,key_,code);config::CONFIG.save_config();if(host_)host_->reload_button_icons();
-        return result::close|result::confirm_sound;
-    }
-    result tick(shell* host) override {
-        host_=host;
-        if(!armed_) {
-            int count{};const auto* keys=SDL_GetKeyboardState(&count);bool pressed=false;
-            for(int i=0;i<count;++i)pressed=pressed||keys[i]!=0;
-            for(const auto& [id,controller]:host->get_window()->controllers)for(int i=0;i<SDL_CONTROLLER_BUTTON_MAX;++i)pressed=pressed||SDL_GameControllerGetButton(controller.get(),static_cast<SDL_GameControllerButton>(i))!=0;
-            armed_=!pressed;
-        }
-        return result::success;
-    }
-    void render(auroreengine::gui_renderer& r,shell* shell) override {
-        overlay_canvas c(r);c.rect(0,0,1920,1080,{0,0,0,0.28F});
-        c.rect(0,199,1920,1,{1,1,1,0.75F});c.rect(0,879,1920,1,{1,1,1,0.75F});
-        c.text("Change Binding",960,350,36,{1,1,1,1},0,true);
-        c.text("Release the controls, then press a "+std::string(key_.starts_with("pad.")?"controller button":"keyboard key")+" for "+key_.substr(4),960,500,28,{1,1,1,1},0,true);
-        shell->render_hint_bar(r,std::array{std::pair{action::cancel,"Cancel"}});
-    }
-private:
-    std::string key_;bool armed_{};shell* host_{};
-};
-}
 
 namespace app::desktop_settings {
 using namespace mfk::i18n::literals;
@@ -478,49 +438,17 @@ struct NovaProbeCache {
     }
 };
 inline NovaProbeCache nova_probe_cache;
-export std::string value(const std::string& key,shell* host=nullptr) {
+export std::string value(const std::string& key,shell* /*host*/=nullptr) {
     const auto& c=config::CONFIG;
-    const auto hex=[](const auto& color) {std::string value="#000000";constexpr char digits[]="0123456789abcdef";for(int i=0;i<3;++i){const auto byte=std::clamp(static_cast<int>(color[i]*255+0.5F),0,255);value[1+i*2]=digits[byte>>4];value[2+i*2]=digits[byte&15];}return value;};
-    if(key=="theme.icon.color")return c.iconColorAuto?"auto":hex(c.iconColor);
-    if(key=="theme.text.color")return hex(c.textColor);
-    if(key=="theme.particle.color")return hex(c.particleColor);
     if(key=="audio.device") {
         nova_probe_cache.ensure_fresh();
         if(!nova_probe_cache.default_sink.empty()) return nova_probe_cache.default_sink;
     }
-    if(host&&!host->get_window()->config.headless) {
-        if(key=="display.mode") {const auto flags=SDL_GetWindowFlags(host->get_window()->win.get());return (flags&SDL_WINDOW_FULLSCREEN_DESKTOP)==SDL_WINDOW_FULLSCREEN_DESKTOP?"Borderless":(flags&SDL_WINDOW_FULLSCREEN)?"Fullscreen":"Windowed";}
-        if(key=="display.monitor")return std::to_string(SDL_GetWindowDisplayIndex(host->get_window()->win.get()));
-        if(key=="display.resolution") {int w{},h{};SDL_GetWindowSize(host->get_window()->win.get(),&w,&h);return std::to_string(w)+"x"+std::to_string(h);}
-        if(key=="audio.device") {const auto name=host->audio_device_name();return name.empty()?"System Default":name;}
-    }
     if(key=="language") return c.language;
-    if(key=="text.scale") return std::to_string(c.textScale).substr(0,3);
-    if(key=="ui.scale") {
-        auto s = std::to_string(c.ui_scale());
-        if(s.find('.')!=std::string::npos) { while(s.back()=='0') s.pop_back(); if(s.back()=='.') s.push_back('0'); }
-        return s;
-    }
-    if(key=="vsync") return c.preferredPresentMode==vk::PresentModeKHR::eFifoRelaxed?"On":"Off";
-    if(key=="fps") return c.maxFPS>10000?"Unlimited":std::to_string(static_cast<int>(c.maxFPS));
-    if(key=="samples") return std::to_string(static_cast<int>(c.sampleCount));
-    if(key=="glass") return c.iconGlassRefraction?"On":"Off";
     if(key=="theme.waves") return c.wavesEnabled?"On":"Off";
     if(key=="theme.particles") return c.particlesEnabled?"On":"Off";
-    if(key=="theme.icon.style") return c.iconStyle;
-    if(key=="theme.font") return c.fontPath.string();
-    if(key=="controller.type") return c.controllerType;
-    if(key=="controller.rumble") return c.controllerRumble?"On":"Off";
-    if(key=="controller.analog") return c.controllerAnalogStick?"On":"Off";
-    if(key=="pictures.folder") return c.pictures_path().string();
-    if(key=="music.folder") return c.music_path().string();
-    if(key=="videos.folder") return c.videos_path().string();
     if(key=="debug.fps") return c.showFPS?"On":"Off";
     if(key=="status.analog.clock") return c.enabled(key,false)?"On":"Off";
-    if(key=="debug.memory") return c.showMemory?"On":"Off";
-    if(key=="about") return "OpenXMB " OPENXMB_VERSION_STRING;
-    if(key=="system.name") return c.preference(key,"OpenXMB system");
-    if(key=="autostart") return c.autostart?"On":"Off";
     if(key=="display.screen.brightness") return std::to_string(nova_backlight_pct());
     if(key=="audio.master") {
         nova_probe_cache.ensure_fresh();
@@ -533,28 +461,13 @@ export std::string value(const std::string& key,shell* host=nullptr) {
     if(key=="network.aeroplane") { nova_probe_cache.ensure_fresh(); return (!nova_probe_cache.wifi_powered&&!nova_probe_cache.bt_powered)?"On":"Off"; }
     const auto saved=c.preference(key);if(!saved.empty()) return saved;
     if(key=="audio.device") return "System Default";
-    if(key=="games.folder") return (openxmb::desktop::default_data_root()/"games").string();
-    if(key.starts_with("audio.") && key!="audio.startup" && key!="audio.background" && key!="audio.duck") return "100";
-    if(key=="music.visualizer") return "Wave";
-    if(key=="music.group") return "Folders";
-    if(key=="music.sort") return "Name";
-    if(key=="video.hardware") return "auto";
-    if(key=="photo.duration") return "5";
-    if(key=="photo.transition") return "Fade";
-    if(key=="photo.fit"||key=="video.fit") return "Fit";
-    if(key=="video.subtitle.size"||key=="display.brightness"||key=="browser.zoom") return "1.0";
-    if(key=="video.audio.language") return "Default";
-    if(key=="video.subtitle.language") return "Off";
+    if(key.starts_with("audio.") && key!="audio.startup") return "100";
+    if(key=="display.brightness") return "1.0";
     if(key=="time.offset") return "0";
     if(key=="time.format") return "24-hour";
     if(key=="date.format") return "DD/MM/YYYY";
-    if(key=="input.repeat") return "180";
-    if(key=="browser.search") return "DuckDuckGo";
-    if(key=="display.mode") return "Windowed";
-    if(key=="games.launch") return "Keep Running";
-    if(key=="power.background.fps") return "30";
-    if(key=="power.dim"||key=="music.shuffle"||key=="music.repeat"||key=="photo.shuffle"||key=="time.seconds"||key=="power.reduced.motion") return "Off";
-    if(key=="startup.intro"||key=="startup.warning"||key=="audio.startup"||key=="audio.background"||key=="audio.duck"||key=="music.background"||key=="music.artwork"||key=="video.resume"||key=="photo.repeat"||key=="input.osk"||key=="power.keep.awake") return "On";
+    if(key=="power.dim"||key=="power.reduced.motion") return "Off";
+    if(key=="audio.startup") return "On";
     return {};
 }
 export std::string display_value(const std::string& key,shell* host=nullptr) {
@@ -779,13 +692,7 @@ class nova_async_task_item final : public progress_item {
 };
 void apply(shell* shell,const std::string& key,const std::string& selected) {
     nova_probe_cache.invalidate();
-    auto& c=config::CONFIG;auto* window=shell->get_window();
-    const bool has_live_window=window!=nullptr && !window->config.headless && window->win;
-    if(key=="theme.icon.color"||key=="theme.text.color"||key=="theme.particle.color") {
-        const bool automatic=key=="theme.icon.color"&&(selected=="auto"||selected=="original");
-        const bool hex=selected.size()==7&&selected.front()=='#'&&std::all_of(selected.begin()+1,selected.end(),[](unsigned char c){return std::isxdigit(c)!=0;});
-        if(!automatic&&!hex){show_error(shell,"Use a six-digit hexadecimal colour such as #ffeefc.");return;}
-    }
+    auto& c=config::CONFIG;
     if(key=="display.screen.brightness") {nova_write_backlight_pct(std::stoi(selected));return;}
     if(key=="audio.master") {
         const int pct=std::clamp(std::stoi(selected),0,100);
@@ -798,85 +705,26 @@ void apply(shell* shell,const std::string& key,const std::string& selected) {
     if(key=="network.wifi") {nova_exec_quiet({"iwctl","device",nova_wifi_device(),"set-property","Powered",selected=="On"?"on":"off"});return;}
     if(key=="network.bluetooth") {nova_exec_quiet({"bluetoothctl","power",selected=="On"?"on":"off"});return;}
     if(key=="network.aeroplane") {nova_exec_quiet({"rfkill",selected=="On"?"block":"unblock","all"});return;}
-    if(key=="system.name" && has_live_window) SDL_SetWindowTitle(window->win.get(),selected.c_str());
     if(key=="language") {c.setLanguage(selected);c.save_config();return;}
-    if(key=="text.scale") {c.textScale=std::stod(selected);shell->reload_fonts();}
-    else if(key=="vsync") c.setVSync(selected=="On");
-    else if(key=="fps") {c.setMaxFPS(selected=="Unlimited"?0:std::stod(selected));if(window!=nullptr) window->config.fpsLimit=selected=="Unlimited"?0:std::stod(selected);}
-    else if(key=="samples") {
-        if(window==nullptr) return;
-        const auto samples=static_cast<vk::SampleCountFlagBits>(std::stoi(selected));
-        const auto supported=window->physicalDevice.getProperties().limits.framebufferColorSampleCounts;
-        if(!(supported&samples)) {show_error(shell,"This sample count is unavailable on the active GPU.");return;}
-        window->waitIdle();c.setSampleCount(samples);window->config.sampleCount=samples;window->recreateSwapchain();
-    }
-    else if(key=="theme.waves") c.setWavesEnabled(selected=="On");
+    if(key=="theme.waves") c.setWavesEnabled(selected=="On");
     else if(key=="theme.particles") c.setParticlesEnabled(selected=="On");
-    else if(key=="theme.icon.style") c.setIconStyle(selected);
-    else if(key=="theme.icon.color") c.setIconColor(selected);
-    else if(key=="theme.particle.color") c.setParticleColor(selected);
-    else if(key=="theme.text.color") c.setTextColor(selected);
-    else if(key=="theme.font") {if(!std::filesystem::is_regular_file(std::filesystem::u8path(selected))) {show_error(shell,"Font file not found.");return;}shell->set_font_file(selected);}
-    else if(key=="theme.wallpaper") {if(!std::filesystem::is_regular_file(std::filesystem::u8path(selected))) {show_error(shell,"Background file not found.");return;}auto ext=std::filesystem::u8path(selected).extension().string();std::transform(ext.begin(),ext.end(),ext.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
+    else if(key=="theme.wallpaper") {if(!std::filesystem::is_regular_file(std::filesystem::u8path(selected))) {show_error(shell,"Background file not found.");return;}auto ext=std::filesystem::u8path(selected).extension().string();std::transform(ext.begin(),ext.end(),ext.begin(),[](unsigned char ch){return static_cast<char>(std::tolower(ch));});
         const std::array<std::string_view,13> videos{".mp4",".mkv",".webm",".mov",".m4v",".avi",".wmv",".mpg",".mpeg",".ts",".m2ts",".vob",".ogv"};
         const bool video=std::find(videos.begin(),videos.end(),ext)!=videos.end();
         if(video) {AVFormatContext* context{};const bool opened=avformat_open_input(&context,selected.c_str(),nullptr,nullptr)>=0;const bool valid=opened&&avformat_find_stream_info(context,nullptr)>=0&&av_find_best_stream(context,AVMEDIA_TYPE_VIDEO,-1,-1,nullptr,0)>=0;avformat_close_input(&context);if(!valid){show_error(shell,"This video cannot be opened.");return;}}
         else {auto* image=IMG_Load(selected.c_str());if(!image){show_error(shell,"This file is not a supported image or video.");return;}SDL_FreeSurface(image);}
         c.setBackgroundImage(selected);c.setBackgroundType(video?config::config::background_type::video:config::config::background_type::image);}
-    else if(key=="theme.sounds") {const auto folder=std::filesystem::u8path(selected);if(!std::filesystem::is_directory(folder)) {show_error(shell,"Sound folder not found.");return;}for(const auto* name:{"ok.wav","confirm.wav","cancel.wav","back.wav"}) {auto* sound=Mix_LoadWAV((folder/name).string().c_str());if(!sound){show_error(shell,std::string("Sound set needs a playable ")+name);return;}Mix_FreeChunk(sound);}}
-    else if(key=="glass") c.setIconGlassRefraction(selected=="On");
-    else if(key=="controller.type") c.setControllerType(selected);
-    else if(key=="controller.rumble") c.setControllerRumble(selected=="On");
-    else if(key=="controller.analog") c.setControllerAnalogStick(selected=="On");
     else if(key=="debug.fps") c.setShowFPS(selected=="On");
-    else if(key=="debug.memory") c.setShowMemory(selected=="On");
-    else if(key=="pictures.folder"||key=="music.folder"||key=="videos.folder"||key=="games.folder"||key=="browser.downloads") {
-        if(!std::filesystem::is_directory(std::filesystem::u8path(selected))) {show_error(shell,"Choose an existing folder.");return;}
-        if(key=="pictures.folder") c.picturesPath=std::filesystem::u8path(selected);
-        if(key=="music.folder") c.musicPath=std::filesystem::u8path(selected);
-        if(key=="videos.folder") c.videosPath=std::filesystem::u8path(selected);
-        if(key=="games.folder") {openxmb::desktop::Library library;library.add_game_root(std::filesystem::u8path(selected));}
-    }
-    else if(key=="display.mode") {
-        const auto flags=selected=="Windowed"?0:selected=="Borderless"?SDL_WINDOW_FULLSCREEN_DESKTOP:SDL_WINDOW_FULLSCREEN;
-        if(has_live_window && SDL_SetWindowFullscreen(window->win.get(),flags)!=0) {show_error(shell,SDL_GetError());return;}
-        if(window!=nullptr) window->config.fullscreen=selected!="Windowed";
-    }
-    else if(key=="display.monitor") {const int index=std::stoi(selected);SDL_Rect bounds{};if(has_live_window && SDL_GetDisplayBounds(index,&bounds)==0) SDL_SetWindowPosition(window->win.get(),bounds.x,bounds.y);}
-    else if(key=="display.resolution") {int w=0,h=0;const auto x=selected.find('x');if(x!=std::string::npos) {w=std::stoi(selected.substr(0,x));h=std::stoi(selected.substr(x+1));}if(w>0&&h>0&&has_live_window) {SDL_DisplayMode mode{};mode.w=w;mode.h=h;SDL_SetWindowDisplayMode(window->win.get(),&mode);SDL_SetWindowSize(window->win.get(),w,h);}}
-    else if(key=="autostart") {
-#ifdef _WIN32
-        HKEY handle{};if(RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,nullptr,0,KEY_SET_VALUE,nullptr,&handle,nullptr)!=ERROR_SUCCESS) {show_error(shell,"Unable to update launch at login.");return;}
-        const auto command=L"\""+(c.exe_directory/L"OpenXMB.exe").wstring()+L"\"";
-        const auto result=selected=="On"?RegSetValueExW(handle,L"OpenXMB",0,REG_SZ,reinterpret_cast<const BYTE*>(command.c_str()),static_cast<DWORD>((command.size()+1)*sizeof(wchar_t))):RegDeleteValueW(handle,L"OpenXMB");RegCloseKey(handle);
-        if(result!=ERROR_SUCCESS&&result!=ERROR_FILE_NOT_FOUND) {show_error(shell,"Unable to update launch at login.");return;}
-#else
-        const auto home=std::getenv("HOME");if(!home) {show_error(shell,"Home directory unavailable.");return;}
-        const auto file=std::filesystem::path(home)/".config/autostart/openxmb.desktop";
-        std::filesystem::create_directories(file.parent_path());
-        if(selected=="On") {std::ofstream out(file);out<<"[Desktop Entry]\nType=Application\nName=OpenXMB\nExec=\""<<(c.exe_directory/"XMS.bin").string()<<"\"\n";}
-        else std::filesystem::remove(file);
-#endif
-        c.autostart=selected=="On";
-    }
-    if(key=="audio.device"&&!shell->set_audio_device(selected=="System Default"?std::string{}:selected)) {show_error(shell,"Could not switch audio output device.");return;}
     c.preferences[key]=selected;c.save_config();
-    if(key=="theme.sounds")shell->reload_theme_sounds();
-    if(key=="music.group"||key=="music.sort"||key.ends_with(".folder")) shell->reload_menu();
 }
 export void activate(shell* shell,const openxmb::xmb::CatalogNode& node) {
-    const auto key=node.action_id.substr(8);const auto title=key;
+    const auto key=node.action_id.substr(8);
     if(key=="system.update") {
         shell->emplace_overlay<message_overlay>("System Update"_(),"Check for and install system updates from the configured flake now?",std::vector<std::string>{"No","Yes"},[shell](unsigned i){
             if(i) shell->emplace_overlay<progress_overlay>("System Update"_(),std::make_unique<nova_update_item>());
         });
         return;
     }
-    if(key=="theme.install") {shell->emplace_overlay<text_entry_overlay>("Theme archive or folder","",[shell](std::string path){try {shell->theme_library()->import_theme(std::filesystem::u8path(path));shell->reload_menu();}catch(const std::exception& e){show_error(shell,e.what());}});return;}
-    if(key=="theme.preset.save") {shell->emplace_overlay<text_entry_overlay>("Preset name","",[shell](std::string name){try {auto library=shell->theme_library();const auto theme=library->create_custom_theme(name,nlohmann::json::parse(config::CONFIG.shell_snapshot()));library->save_preset(name,theme.id,{});}catch(const std::exception& e){show_error(shell,e.what());}});return;}
-    if(key=="theme.preset.load") {const auto names=shell->theme_library()->presets();if(names.empty()){show_error(shell,"No saved theme presets.");return;}shell->emplace_overlay<choice_overlay>(names,0,[shell,names](unsigned i){try{shell->apply_theme(shell->theme_library()->load_preset(names.at(i)));}catch(const std::exception& e){show_error(shell,e.what());}});return;}
-
-    if(key=="browser.clear") {shell->emplace_overlay<message_overlay>("Clear Browsing Data?","Remove browser cookies, site storage and cached pages?",std::vector<std::string>{"No","Yes"},[](unsigned i){if(i) {config::CONFIG.preferences["browser.clear_site_data"]=std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());config::CONFIG.save_config();}});return;}
     if(key=="network.wifi.join") {
         auto found=std::make_shared<std::vector<NovaWifiNetwork>>();
         auto item=std::make_unique<nova_async_task_item<std::function<void()>>>("Scanning for Wi-Fi networks...",[found](){
@@ -990,14 +838,6 @@ export void activate(shell* shell,const openxmb::xmb::CatalogNode& node) {
         return;
     }
     if(key=="games.rescan") {openxmb::desktop::Library library;const auto count=library.scan_games();show_error(shell,"Added "+std::to_string(count)+" games to the library.");return;}
-    if(key=="input.keyboard"||key=="input.controller") {
-        const bool controller=key=="input.controller";
-        shell->emplace_overlay<choice_overlay>(::app::detail::localize_ui_choices(std::vector<std::string>{"Left","Right","Up","Down","Confirm","Back","Options","Extra","Restore Defaults"}),0,[shell,controller](unsigned i){
-            static const std::array<std::string,8> actions{"left","right","up","down","ok","cancel","options","extra"};
-            if(i==8) {for(const auto& action:actions) config::CONFIG.preferences.erase((controller?"pad.":"key.")+action);config::CONFIG.save_config();shell->reload_button_icons();return;}
-            shell->queue_panel(std::string(controller?"bind.pad.":"bind.key.")+actions[i]);
-        });return;
-    }
     if(key=="audio.device") {
         const auto sinks=nova_pipewire_sinks();
         if(!sinks.empty()) {
@@ -1020,11 +860,10 @@ export void activate(shell* shell,const openxmb::xmb::CatalogNode& node) {
             });
             return;
         }
+        show_error(shell,"No audio output devices found.");
+        return;
     }
     std::vector<std::string> values;for(const auto& choice:node.choices) values.push_back(choice.value);
-    if(key=="display.monitor") for(int i=0;i<SDL_GetNumVideoDisplays();++i) values.push_back(std::to_string(i));
-    if(key=="display.resolution") {for(int i=0;i<SDL_GetNumDisplayModes(0);++i) {SDL_DisplayMode mode{};if(SDL_GetDisplayMode(0,i,&mode)==0) {const auto item=std::to_string(mode.w)+"x"+std::to_string(mode.h);if(std::find(values.begin(),values.end(),item)==values.end())values.push_back(item);}}}
-    if(key=="audio.device") {values.push_back("System Default");for(int i=0;i<SDL_GetNumAudioDevices(0);++i) if(auto* name=SDL_GetAudioDeviceName(i,0))values.emplace_back(name);}
     if(!values.empty()) {
         const auto current=value(key,shell);
         auto it=std::find(values.begin(),values.end(),current);

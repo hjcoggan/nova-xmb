@@ -121,8 +121,8 @@ void draw_icon(auroreengine::gui_renderer &renderer,
   }
 
   // Covers use the same fixed card as the crossbar (SelectionLens).
-  // On the console every icon fits the shared row box; elsewhere only covers.
-  const bool boxed = icon.preserve_color || config::CONFIG.console_mode();
+  // On the console every icon fits the shared row box.
+  const bool boxed = true;
   // Settings rows carry square icons only, so their box is square.
   const double slot_w = boxed ? SelectionLens::box_width(row.icon_extent, false) : row.icon_extent;
   const double slot_h = boxed ? SelectionLens::box_height(row.icon_extent) : row.icon_extent;
@@ -267,16 +267,14 @@ void SettingsSceneRenderer::render(auroreengine::gui_renderer &renderer,
     if (edge_fade <= 0.001)
       continue;
     row.alpha *= edge_fade;
-    if (config::CONFIG.console_mode()) {
-      // Labels start where they do in the other columns.
-      // One shift for every row (focused or not), so labels stay aligned.
-      row.label_x += SelectionLens::label_shift_for(SettingsSceneMetrics::focused_icon_extent, false);
-      row.description_x += SelectionLens::label_shift_for(SettingsSceneMetrics::focused_icon_extent, false);
-    }
+    // Labels start where they do in the other columns.
+    // One shift for every row (focused or not), so labels stay aligned.
+    row.label_x += SelectionLens::label_shift_for(SettingsSceneMetrics::focused_icon_extent, false);
+    row.description_x += SelectionLens::label_shift_for(SettingsSceneMetrics::focused_icon_extent, false);
     row.value_alpha *= edge_fade;
     row.description_alpha *= edge_fade;
 
-    if (row.focused && config::CONFIG.console_mode()) {
+    if (row.focused) {
       // Span the label, or the value when the row has one.
       const auto label_px = renderer.text_width_pixels(
           row.label, static_cast<float>(row.label_size) * layout.scale) / layout.scale;
