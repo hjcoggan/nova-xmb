@@ -54,14 +54,18 @@ void focused_text_holds_scrolls_pauses_and_loops() {
           "it holds still when focused");
   require(slot.sample(100.0, 8.0F).first == 0, "hold shows the first page");
 
-  const auto mid = slot.sample(ui::text_timing::hold_start_ms + travel * 0.5,
-                               8.0F);
-  require(slot.phase(ui::text_timing::hold_start_ms + travel * 0.5) ==
-              ui::text_phase::scrolling,
+  constexpr float glyph_width = 8.0F;
+  // 55% of the travel lands between glyph boundaries, so the run has a
+  // fractional offset and slides smoothly.
+  const double mid_ms = ui::text_timing::hold_start_ms + travel * 0.55;
+  const auto mid = slot.sample(mid_ms, glyph_width);
+  require(slot.phase(mid_ms) == ui::text_phase::scrolling,
           "it scrolls after the hold");
   require(mid.first > 0 && mid.first < static_cast<std::size_t>(end),
           "the window moves into the middle of the string");
   require(mid.count <= 11, "the renderer gets at most one spare glyph");
+  require(mid.offset_px > 0.0F && mid.offset_px < glyph_width,
+          "the run slides smoothly between glyph boundaries");
 
   const auto at_end = ui::text_timing::hold_start_ms + travel + 100.0;
   const auto last = slot.sample(at_end, 8.0F);

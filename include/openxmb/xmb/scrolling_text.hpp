@@ -80,13 +80,15 @@ class scrolling_text {
 
     const auto [phase, cursor] = motion(now_ms);
     (void)phase;
-    // Move a whole glyph at a time. A fractional offset would show half a
-    // letter at the slot edge, which the no-mid-glyph rule forbids.
-    (void)glyph_width_px;
-    const auto first = std::min(static_cast<std::size_t>(cursor + 0.5),
+    // Pixel-smooth scroll: the extra leading glyph and the fractional offset
+    // let the run slide continuously. The renderer clips (and softens) the
+    // two slot edges, so no half letter is show as a hard cut.
+    const auto first = std::min(static_cast<std::size_t>(cursor),
                                 text_.size() - fitting);
-    const auto count = std::min(fitting, text_.size() - first);
-    return {first, count, 0.0F, false};
+    const auto whole = static_cast<double>(first);
+    const auto count = std::min(fitting + 1, text_.size() - first);
+    return {first, count,
+            static_cast<float>((cursor - whole) * glyph_width_px), false};
   }
 
  private:
