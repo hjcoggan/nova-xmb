@@ -194,58 +194,39 @@ void draw_wrapped_description(auroreengine::gui_renderer &renderer,
       row.description_max_width <= 0.0)
     return;
 
-  const auto size = layout.text_size(row.description_size);
-  const auto avail_w = std::max(
-      120.0,
-      static_cast<double>(layout.framebuffer_width) -
-          (layout.offset_x + row.description_x * layout.scale) -
-          48.0 * layout.scale);
-  const auto max_width = static_cast<float>(
-      std::min(row.description_max_width * layout.scale, avail_w) /
-      layout.framebuffer_width);
-  auto cursor = std::size_t{};
-  auto line = std::size_t{};
-  while (cursor < row.description.size() &&
-         line < SettingsSceneMetrics::max_description_lines) {
-    while (cursor < row.description.size() &&
-           (row.description[cursor] == ' ' || row.description[cursor] == '\n'))
-      ++cursor;
-    if (cursor >= row.description.size())
-      break;
-
-    const auto line_start = cursor;
-    auto accepted_end = cursor;
-    while (cursor < row.description.size()) {
-      const auto word_start = cursor;
-      while (cursor < row.description.size() &&
-             row.description[cursor] != ' ' && row.description[cursor] != '\n')
-        ++cursor;
-      const auto candidate_end = cursor;
-      const auto candidate =
-          row.description.substr(line_start, candidate_end - line_start);
-      // Aurore's measurement consumes the pre-geometry half scale.
-      if (accepted_end != line_start &&
-          renderer.measure_text(candidate, size * 0.5F).x > max_width) {
-        cursor = word_start;
-        break;
-      }
-      accepted_end = candidate_end;
-      if (cursor < row.description.size() && row.description[cursor] == '\n') {
-        ++cursor;
-        break;
-      }
-      while (cursor < row.description.size() && row.description[cursor] == ' ')
-        ++cursor;
-    }
-    if (accepted_end == line_start)
-      accepted_end = cursor;
-    const auto text =
-        row.description.substr(line_start, accepted_end - line_start);
-    renderer.draw_text_pixels(text,layout.offset_x+row.description_x*layout.scale,
-        layout.offset_y+(row.description_y+static_cast<double>(line)*row.description_line_height)*layout.scale,
-        22.0F*layout.scale,{0.92F,0.92F,0.92F,static_cast<float>(row.description_alpha)},0.65F);
-    ++line;
+  // A description never wraps. A second line used to be drawn below the
+  // focus lens and over the divider ("Restore Original Theme", "Licences",
+  // "System Information"). One line, shortened with an ellipsis, keeps every
+  // row the same height and every card the same shape.
+  const auto size = 22.0F * layout.scale;
+  const auto room = static_cast<float>(std::min<double>(
+      row.description_max_width * layout.scale,
+      std::max(120.0, static_cast<double>(layout.framebuffer_width) -
+                          (layout.offset_x + row.description_x * layout.scale) -
+                          ui::px(ui::space::lg) * layout.scale)));
+  std::string text(row.description);
+  const std::string ellipsis = "\xE2\x80\xA6";
+  while (!text.empty() && renderer.text_width_pixels(text, size) > room) {
+    text.pop_back();
+    while (!text.empty() &&
+           (static_cast<unsigned char>(text.back()) & 0xC0) == 0x80)
+      text.pop_back();
   }
+  while (!text.empty() && text.back() == ' ') text.pop_back();
+  if (!text.empty() && text.size() != row.description.size()) {
+    while (!text.empty() &&
+           renderer.text_width_pixels(text + ellipsis, size) > room) {
+      text.pop_back();
+      while (!text.empty() &&
+             (static_cast<unsigned char>(text.back()) & 0xC0) == 0x80)
+        text.pop_back();
+    }
+    if (!text.empty()) text += ellipsis;
+  }
+  renderer.draw_text_pixels(text,
+      layout.offset_x + row.description_x * layout.scale,
+      layout.offset_y + row.description_y * layout.scale, size,
+      {0.92F, 0.92F, 0.92F, static_cast<float>(row.description_alpha)}, 0.65F);
 }
 
 } // namespace

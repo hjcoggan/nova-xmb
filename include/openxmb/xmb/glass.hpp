@@ -5,6 +5,8 @@
 // 1920x1080 authoring space of app::xmb_canvas. (The full material spec is a
 // local-only note under docs/superpowers/, which is not tracked in git.)
 
+#include "openxmb/xmb/ui_tokens.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -32,9 +34,10 @@ struct material {
   return {10.0F, 3.5F, 0.012F, 1.0F, true};
 }
 
-inline constexpr float card_radius = 36.0F;
-inline constexpr float card_padding = 32.0F;
-inline constexpr float grid = 8.0F;
+// Shape tokens come from the one ui scale; these names stay for callers.
+inline constexpr float card_radius = ui::px(ui::radius::xl);
+inline constexpr float card_padding = ui::px(ui::space::xl);
+inline constexpr float grid = ui::px(ui::space::xs);
 // White text holds 7:1 against a body no brighter than this (4.5:1, the
 // floor, looked washed out over bright paused games on the device).
 inline constexpr float max_body_luminance = 0.10F;
@@ -62,7 +65,7 @@ inline constexpr float panel_start_scale = 0.96F;
 }
 
 [[nodiscard]] constexpr float concentric_radius(float outer, float inset) noexcept {
-  return std::max(0.0F, outer - inset);
+  return ui::concentric(outer, inset);
 }
 
 [[nodiscard]] constexpr float clamp_radius(float radius, float width, float height) noexcept {
