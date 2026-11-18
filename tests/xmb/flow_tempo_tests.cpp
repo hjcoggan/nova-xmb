@@ -1,6 +1,5 @@
 #include "../../src/render/flow_tempo.hpp"
 #include "../../src/render/music_response.hpp"
-#include "../../src/programs/transient_notice.hpp"
 #include <iostream>
 #include <stdexcept>
 using openxmb::render_detail::FlowTempo;
@@ -28,9 +27,5 @@ int main() try {
     check(paused.confidence<.001&&std::abs(paused.speed-1)<.01,"pause releases tempo motion smoothly");
     auto reset=fast;reset.advance(.016,0,0,true,2);
     check(reset.confidence==0&&reset.bpm==0,"new track cannot inherit old tempo");
-    using programs::detail::notice_alpha;
-    check(notice_alpha(0)==1&&notice_alpha(2)==1,"visualiser name held initially");
-    check(notice_alpha(2.6)>.45&&notice_alpha(2.6)<.55,"visualiser name fades smoothly");
-    check(notice_alpha(3)==0&&notice_alpha(30)==0,"visualiser name disappears after three seconds");
-    std::cout<<"Flow tempo and transient label passed\n";
+    std::cout<<"Flow tempo passed\n";
 }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}

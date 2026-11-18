@@ -502,24 +502,18 @@ set(XMS_SOURCES
   src/app/components/launch_overlay.cpp
   src/app/components/main_menu.cpp
   src/app/components/message_overlay.cpp
-  src/app/components/news_display.cpp
   src/app/components/pause_overlay.cpp
   src/app/components/progress_overlay.cpp
   src/app/components/startup_overlay.cpp
   src/app/layers/blur_layer.cpp
   src/menu/applications_menu.cpp
-  src/menu/files_menu.cpp
-  src/menu/settings_menu.cpp
-  src/menu/users_menu.cpp
   src/render/shaders.cpp
   src/config.cpp
   src/main.cpp
   src/utils.cpp
-  src/programs.cpp
 )
 set(XMS_MODULE_SOURCES
   src/app/components/desktop_settings.cppm
-  src/programs/about.cppm
   src/app/components/text_entry.cppm
   src/app/module.cppm
   src/app/shell.cppm
@@ -528,7 +522,6 @@ set(XMS_MODULE_SOURCES
   src/app/components/launch_overlay.cppm
   src/app/components/main_menu.cppm
   src/app/components/message_overlay.cppm
-  src/app/components/news_display.cppm
   src/app/components/pause_overlay.cppm
   src/app/components/progress_overlay.cppm
   src/app/components/startup_overlay.cppm
@@ -537,14 +530,7 @@ set(XMS_MODULE_SOURCES
   src/constants.cppm
   src/menu/applications_menu.cppm
   src/menu/base.cppm
-  src/menu/files_menu.cppm
-  src/menu/settings_menu.cppm
-  src/menu/users_menu.cppm
   src/menu/utils.cppm
-  src/programs.cppm
-  src/programs/base_viewer.cppm
-  src/programs/image_viewer.cppm
-  src/programs/text_viewer.cppm
   src/render/module.cppm
   src/render/shaders.cppm
   src/render/components/wave_renderer.cppm
@@ -560,33 +546,12 @@ set(XMS_MODULE_SOURCES
 )
 list(APPEND XMS_MODULE_SOURCES src/debug.cppm)
 
-if(ENABLE_VIDEO_PLAYER)
-  list(APPEND XMS_MODULE_SOURCES src/programs/video_player.cppm)
-  add_compile_definitions(OPENXMB_ENABLE_VIDEO_PLAYER=1)
-else()
-  add_compile_definitions(OPENXMB_ENABLE_VIDEO_PLAYER=0)
-endif()
-
-if(ENABLE_BROWSER)
-  list(APPEND XMS_MODULE_SOURCES src/modules/browser.cppm)
-  add_compile_definitions(OPENXMB_ENABLE_BROWSER=1)
-else()
-  add_compile_definitions(OPENXMB_ENABLE_BROWSER=0)
-endif()
-
-if(ENABLE_LIBRETRO)
-  list(APPEND XMS_MODULE_SOURCES src/modules/libretro.cppm)
-  add_compile_definitions(OPENXMB_ENABLE_LIBRETRO=1)
-else()
-  add_compile_definitions(OPENXMB_ENABLE_LIBRETRO=0)
-endif()
-
-if(ENABLE_DISC_MEDIA)
-  list(APPEND XMS_MODULE_SOURCES src/modules/disc.cppm)
-  add_compile_definitions(OPENXMB_ENABLE_DISC_MEDIA=1)
-else()
-  add_compile_definitions(OPENXMB_ENABLE_DISC_MEDIA=0)
-endif()
+add_compile_definitions(
+  OPENXMB_ENABLE_VIDEO_PLAYER=0
+  OPENXMB_ENABLE_BROWSER=0
+  OPENXMB_ENABLE_LIBRETRO=0
+  OPENXMB_ENABLE_DISC_MEDIA=0
+)
 set(XMS_SHADERS
   shaders/procedural_wave.vert
   shaders/procedural_wave.frag
@@ -603,7 +568,6 @@ set(XMS_SHADERS
   shaders/captured_wave.frag
   shaders/monthly_background.vert
   shaders/monthly_background.frag
-  shaders/yuv420p_decode.comp
 )
 
 add_executable(XMS ${XMS_SOURCES})
@@ -682,49 +646,13 @@ endif()
 target_link_libraries(XMS PRIVATE fmt::fmt)
 
 include(cmake/Desktop.cmake)
-include(cmake/Music.cmake)
-include(cmake/Photos.cmake)
-include(cmake/Documents.cmake)
 include(cmake/Themes.cmake)
-include(cmake/Integrations.cmake)
-if(ENABLE_BROWSER AND WIN32)
-  include(cmake/OpenXMBBrowserWindows.cmake)
-endif()
-target_link_libraries(XMS PRIVATE OpenXMB::MusicCore OpenXMB::Integrations OpenXMB::DesktopCore)
+target_link_libraries(XMS PRIVATE OpenXMB::DesktopCore)
 target_sources(XMS PRIVATE src/programs/library_manager.cpp)
 target_sources(XMS PUBLIC FILE_SET CXX_MODULES FILES
   src/app/xmb_presentation.cppm
-  src/programs/music_player.cppm
-  src/programs/integration_center.cppm
   src/programs/library_manager.cppm
   )
-
-if(ENABLE_VIDEO_PLAYER)
-  target_sources(XMS PRIVATE src/video.cpp src/video_worker.cpp)
-  target_sources(XMS PUBLIC FILE_SET CXX_MODULES FILES src/render/components/video_background.cppm src/render/components/video_texture.cppm)
-  auroreengine_add_shader(XMS shaders/video_background.vert)
-  auroreengine_add_shader(XMS shaders/video_background.frag)
-endif()
-
-if(OPENXMB_BUILD_NATIVE_TESTS AND ENABLE_VIDEO_PLAYER)
-  add_executable(openxmb_video_tests tests/video/video_playback_test.cpp src/video.cpp src/video_worker.cpp)
-  target_include_directories(openxmb_video_tests PRIVATE include ${OPENXMB_FFMPEG_INCLUDE_DIRS})
-  target_link_directories(openxmb_video_tests PRIVATE ${OPENXMB_FFMPEG_LIBRARY_DIRS})
-  target_link_libraries(openxmb_video_tests PRIVATE SDL2::SDL2 SDL2_mixer::SDL2_mixer ${OPENXMB_FFMPEG_LIBRARIES})
-  set_target_properties(openxmb_video_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
-  add_test(NAME openxmb_video_playback
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/video/run_video_playback_test.py"
-      --ffmpeg "${OPENXMB_MUSIC_FFMPEG_EXECUTABLE}" --player "$<TARGET_FILE:openxmb_video_tests>" --output "${CMAKE_CURRENT_BINARY_DIR}/video-fixtures")
-  add_executable(openxmb_video_native_tests tests/video/native_pipeline_tests.cpp src/video.cpp)
-  target_include_directories(openxmb_video_native_tests PRIVATE include ${OPENXMB_FFMPEG_INCLUDE_DIRS})
-  target_link_directories(openxmb_video_native_tests PRIVATE ${OPENXMB_FFMPEG_LIBRARY_DIRS})
-  target_link_libraries(openxmb_video_native_tests PRIVATE SDL2::SDL2 SDL2_mixer::SDL2_mixer ${OPENXMB_FFMPEG_LIBRARIES})
-  set_target_properties(openxmb_video_native_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
-  add_test(NAME openxmb_video_native_pipeline COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/video/native_pipeline_fixtures.py" --ffmpeg "${OPENXMB_MUSIC_FFMPEG_EXECUTABLE}" --player "$<TARGET_FILE:openxmb_video_native_tests>")
-  set_tests_properties(openxmb_video_native_pipeline PROPERTIES TIMEOUT 120 ENVIRONMENT "SDL_AUDIODRIVER=dummy")
-  set_tests_properties(openxmb_video_playback PROPERTIES TIMEOUT 120 ENVIRONMENT "SDL_AUDIODRIVER=dummy")
-endif()
 
 if(WIN32 AND DEFINED _VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
   if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -1474,23 +1402,6 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   set_tests_properties(openxmb_input_bindings_tests PROPERTIES TIMEOUT 120)
 endif()
 
-if(OPENXMB_BUILD_NATIVE_TESTS AND ENABLE_VIDEO_PLAYER)
-  add_executable(openxmb_video_texture_tests tests/video/video_texture_tests.cpp)
-  target_include_directories(openxmb_video_texture_tests PRIVATE include)
-  set_target_properties(openxmb_video_texture_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
-  add_test(NAME openxmb_video_texture_tests COMMAND openxmb_video_texture_tests)
-  set_tests_properties(openxmb_video_texture_tests PROPERTIES TIMEOUT 120)
-  option(OPENXMB_BUILD_GPU_TESTS "Build real Vulkan video upload validation" OFF)
-  if(OPENXMB_BUILD_GPU_TESTS)
-    add_executable(openxmb_video_texture_gpu_tests tests/video/video_texture_gpu_tests.cpp)
-    target_include_directories(openxmb_video_texture_gpu_tests PRIVATE include "${vulkanmemoryallocator-hpp_SOURCE_DIR}/include" "${vulkanmemoryallocator-hpp_SOURCE_DIR}/VulkanMemoryAllocator/include")
-    target_link_libraries(openxmb_video_texture_gpu_tests PRIVATE Vulkan::Vulkan)
-    set_target_properties(openxmb_video_texture_gpu_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
-    add_test(NAME openxmb_video_texture_gpu COMMAND openxmb_video_texture_gpu_tests "${CMAKE_CURRENT_BINARY_DIR}/shaders/yuv420p_decode.comp.spv")
-    set_tests_properties(openxmb_video_texture_gpu PROPERTIES TIMEOUT 120)
-  endif()
-endif()
-
 if(OPENXMB_BUILD_NATIVE_TESTS)
   add_executable(openxmb_input_timing_tests tests/xmb/input_timing_tests.cpp)
   set_target_properties(openxmb_input_timing_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
@@ -1503,29 +1414,6 @@ if(OPENXMB_BUILD_NATIVE_TESTS)
   set_target_properties(openxmb_dialog_input_layout_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
   add_test(NAME openxmb_dialog_input_layout_tests COMMAND openxmb_dialog_input_layout_tests)
   set_tests_properties(openxmb_dialog_input_layout_tests PROPERTIES TIMEOUT 120)
-endif()
-
-if(OPENXMB_BUILD_NATIVE_TESTS AND ENABLE_VIDEO_PLAYER)
-  foreach(video_target IN ITEMS interleave_tests clock_diagnostics)
-    add_executable(openxmb_video_${video_target} tests/video/${video_target}.cpp src/video.cpp)
-    target_include_directories(openxmb_video_${video_target} PRIVATE include ${OPENXMB_FFMPEG_INCLUDE_DIRS})
-    target_link_directories(openxmb_video_${video_target} PRIVATE ${OPENXMB_FFMPEG_LIBRARY_DIRS})
-    target_link_libraries(openxmb_video_${video_target} PRIVATE SDL2::SDL2 SDL2_mixer::SDL2_mixer ${OPENXMB_FFMPEG_LIBRARIES})
-    set_target_properties(openxmb_video_${video_target} PROPERTIES CXX_SCAN_FOR_MODULES OFF)
-  endforeach()
-  target_compile_definitions(openxmb_video_interleave_tests PRIVATE OPENXMB_VIDEO_PAUSE_TESTS)
-  add_test(NAME openxmb_video_interleave COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/video/interleave_fixtures.py" --ffmpeg "${OPENXMB_MUSIC_FFMPEG_EXECUTABLE}" --player "$<TARGET_FILE:openxmb_video_interleave_tests>")
-  set_tests_properties(openxmb_video_interleave PROPERTIES TIMEOUT 90 ENVIRONMENT "SDL_AUDIODRIVER=dummy")
-endif()
-
-if(OPENXMB_BUILD_NATIVE_TESTS AND ENABLE_VIDEO_PLAYER)
-  add_executable(openxmb_video_reduced_motion_tests tests/video/video_reduced_motion_tests.cpp src/video.cpp src/video_worker.cpp)
-  target_include_directories(openxmb_video_reduced_motion_tests PRIVATE include ${OPENXMB_FFMPEG_INCLUDE_DIRS})
-  target_link_directories(openxmb_video_reduced_motion_tests PRIVATE ${OPENXMB_FFMPEG_LIBRARY_DIRS})
-  target_link_libraries(openxmb_video_reduced_motion_tests PRIVATE SDL2::SDL2 SDL2_mixer::SDL2_mixer ${OPENXMB_FFMPEG_LIBRARIES})
-  set_target_properties(openxmb_video_reduced_motion_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
-  add_test(NAME openxmb_video_reduced_motion COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/video/run_video_playback_test.py" --ffmpeg "${OPENXMB_MUSIC_FFMPEG_EXECUTABLE}" --player "$<TARGET_FILE:openxmb_video_reduced_motion_tests>" --output "${CMAKE_CURRENT_BINARY_DIR}/video-reduced-motion-fixtures")
-  set_tests_properties(openxmb_video_reduced_motion PROPERTIES TIMEOUT 30 ENVIRONMENT "SDL_AUDIODRIVER=dummy")
 endif()
 
 if(OPENXMB_BUILD_NATIVE_TESTS)

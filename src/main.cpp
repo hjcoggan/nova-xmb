@@ -198,10 +198,9 @@ int main(int argc, char *argv[]) try {
     program.add_argument("--interfacefx-debug").flag()
         .help("Enable interface/UI graphics debug overlays (e.g., font atlas)");
 
-    program.add_argument("--open-media").default_value(std::string{}).help("Open a media file in its native viewer after startup");
     program.add_argument("--force-dir").default_value(std::string{}).metavar("DIRECTORY")
         .help("Use media folders inside this home directory (Music, Pictures/Photos, Videos/Movies), or a flat library, for this run only");
-    program.add_argument("--open-panel").default_value(std::string{}).help("Open themes, browser, emulation, discs or system");
+    program.add_argument("--open-panel").default_value(std::string{}).help("Open themes, games or system");
     try {
         startup_trace("parsing arguments");
         program.parse_args(argc, argv);
@@ -278,7 +277,6 @@ int main(int argc, char *argv[]) try {
     spdlog::debug("Installing OpenXMB shell phase");
     window.set_phase(shell, shell, shell);
     shell->queue_panel(program.get<std::string>("--open-panel"));
-    shell->queue_media(program.get<std::string>("--open-media"));
 
     spdlog::debug("Entering OpenXMB main loop");
     window.loop();

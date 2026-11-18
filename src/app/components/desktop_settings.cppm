@@ -4,10 +4,8 @@ module;
 #include "openxmb/xmb/iwctl_status.hpp"
 #include "../../localization/shell_locale.hpp"
 #include "../input_bindings.hpp"
-#include "openxmb/music/player.hpp"
 #include "openxmb/desktop/library.hpp"
 #include "openxmb/themes/library.hpp"
-#include "../../desktop/log_path.hpp"
 #include <SDL2/SDL_mixer.h>
 #include <SDL2/SDL_image.h>
 #include <cctype>
@@ -18,7 +16,6 @@ extern "C" {
 #include <nlohmann/json.hpp>
 #include <cstdio>
 #include <cstdlib>
-#include "openxmb/integrations/desktop.hpp"
 #include <SDL2/SDL.h>
 #undef main
 #include <algorithm>
@@ -536,9 +533,7 @@ export std::string value(const std::string& key,shell* host=nullptr) {
     if(key=="network.aeroplane") { nova_probe_cache.ensure_fresh(); return (!nova_probe_cache.wifi_powered&&!nova_probe_cache.bt_powered)?"On":"Off"; }
     const auto saved=c.preference(key);if(!saved.empty()) return saved;
     if(key=="audio.device") return "System Default";
-    if(key=="browser.homepage") return "https://duckduckgo.com";
-    if(key=="browser.downloads") return (openxmb::integrations::user_data_directory()/"downloads").string();
-    if(key=="games.folder") return (openxmb::integrations::user_data_directory()/"games").string();
+    if(key=="games.folder") return (openxmb::desktop::default_data_root()/"games").string();
     if(key.starts_with("audio.") && key!="audio.startup" && key!="audio.background" && key!="audio.duck") return "100";
     if(key=="music.visualizer") return "Wave";
     if(key=="music.group") return "Folders";
@@ -791,7 +786,6 @@ void apply(shell* shell,const std::string& key,const std::string& selected) {
         const bool hex=selected.size()==7&&selected.front()=='#'&&std::all_of(selected.begin()+1,selected.end(),[](unsigned char c){return std::isxdigit(c)!=0;});
         if(!automatic&&!hex){show_error(shell,"Use a six-digit hexadecimal colour such as #ffeefc.");return;}
     }
-    if(key=="browser.homepage") {const auto checked=openxmb::integrations::validate_browser_url(selected);if(!checked){show_error(shell,checked.message);return;}}
     if(key=="display.screen.brightness") {nova_write_backlight_pct(std::stoi(selected));return;}
     if(key=="audio.master") {
         const int pct=std::clamp(std::stoi(selected),0,100);
@@ -865,7 +859,7 @@ void apply(shell* shell,const std::string& key,const std::string& selected) {
 #endif
         c.autostart=selected=="On";
     }
-    if(key=="audio.device"&&!shell->set_audio_device(selected=="System Default"?std::string{}:selected)) {show_error(shell,openxmb::music::service().snapshot().error);return;}
+    if(key=="audio.device"&&!shell->set_audio_device(selected=="System Default"?std::string{}:selected)) {show_error(shell,"Could not switch audio output device.");return;}
     c.preferences[key]=selected;c.save_config();
     if(key=="theme.sounds")shell->reload_theme_sounds();
     if(key=="music.group"||key=="music.sort"||key.ends_with(".folder")) shell->reload_menu();
@@ -995,19 +989,7 @@ export void activate(shell* shell,const openxmb::xmb::CatalogNode& node) {
         });
         return;
     }
-    if(key=="music.rescan") {shell->reload_menu();return;}
     if(key=="games.rescan") {openxmb::desktop::Library library;const auto count=library.scan_games();show_error(shell,"Added "+std::to_string(count)+" games to the library.");return;}
-    if(key=="games.emulation") {shell->open_panel("emulation");return;}
-    if(key=="cache.clear") {shell->emplace_overlay<message_overlay>("Clear Thumbnail Cache?","Generated thumbnails will be recreated when needed. Original media is preserved.",std::vector<std::string>{"No","Yes"},[shell](unsigned i){if(i) {const auto root=openxmb::integrations::user_data_directory()/"thumbnails";std::error_code error;std::filesystem::remove_all(root,error);if(error)show_error(shell,error.message());}});return;}
-    if(key=="debug.logs") {
-#ifdef _WIN32
-        const auto directory=openxmb::desktop::log_directory();std::filesystem::create_directories(directory);ShellExecuteW(nullptr,L"open",directory.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
-#else
-        show_error(shell,"File logging is unavailable on this platform.");
-#endif
-        return;
-    }
-    if(key=="debug.decoder") {const auto& m=openxmb::music::service().snapshot().metadata;show_error(shell,"Music codec: "+m.codec+"\nSample rate: "+std::to_string(m.sample_rate)+" Hz\nChannels: "+std::to_string(m.channels)+"\nVideo decoder details are available in the video player's information display.");return;}
     if(key=="input.keyboard"||key=="input.controller") {
         const bool controller=key=="input.controller";
         shell->emplace_overlay<choice_overlay>(::app::detail::localize_ui_choices(std::vector<std::string>{"Left","Right","Up","Down","Confirm","Back","Options","Extra","Restore Defaults"}),0,[shell,controller](unsigned i){

@@ -100,21 +100,6 @@ namespace wave_renderer {
     }
 }
 
-namespace yuv420p {
-    #pragma clang diagnostic push
-    #pragma clang diagnostic ignored "-Wc23-extensions"
-    constexpr char decode_comp_array[] = {
-    #embed "shaders/yuv420p_decode.comp.spv"
-    };
-    #pragma clang diagnostic pop
-
-    constexpr std::array decode_comp_shader = auroreengine::convert<std::to_array(decode_comp_array), uint32_t>();
-
-    vk::UniqueShaderModule decode_comp(vk::Device device) {
-        return auroreengine::createShader(device, decode_comp_shader);
-    }
-}
-
 namespace original_bg {
     #pragma clang diagnostic push
     #pragma clang diagnostic ignored "-Wc23-extensions"
@@ -157,21 +142,6 @@ namespace procedural_wave {
     };
     constexpr unsigned char frag_data[] = {
     #embed "shaders/procedural_wave.frag.spv"
-    };
-    vk::UniqueShaderModule vert(vk::Device device) {
-        return auroreengine::createShader(device, auroreengine::convert<std::to_array(vert_data), uint32_t>());
-    }
-    vk::UniqueShaderModule frag(vk::Device device) {
-        return auroreengine::createShader(device, auroreengine::convert<std::to_array(frag_data), uint32_t>());
-    }
-}
-
-namespace video_background {
-    constexpr unsigned char vert_data[] = {
-    #embed "shaders/video_background.vert.spv"
-    };
-    constexpr unsigned char frag_data[] = {
-    #embed "shaders/video_background.frag.spv"
     };
     vk::UniqueShaderModule vert(vk::Device device) {
         return auroreengine::createShader(device, auroreengine::convert<std::to_array(vert_data), uint32_t>());

@@ -59,11 +59,10 @@ module;
 
 #include "openxmb/xmb/boot_timeline.hpp"
 #include "openxmb/xmb/background.hpp"
-#include "openxmb/music/player.hpp"
 #include "input_bindings.hpp"
 #include "components/media_motion.hpp"
 #include "../localization/font_selection.hpp"
-#include "openxmb/integrations/desktop.hpp"
+#include "openxmb/desktop/library.hpp"
 #include "openxmb/themes/library.hpp"
 #include <csignal>
 #include <cstring>
@@ -93,12 +92,9 @@ import :startup_overlay;
 import :choice_overlay;
 import :message_overlay;
 import :pause_overlay;
-import :programs;
 import :theme_manager;
 import :menu_utils;
-import :integration_center;
 import :library_manager;
-import :about;
 import :desktop_settings;
 
 using namespace mfk::i18n::literals;
@@ -280,7 +276,6 @@ namespace app
             unlink(pause_sock_path.c_str());
             pause_sock_path.clear();
         }
-        openxmb::music::service().shutdown();
     }
 
     void shell::begin_launch(const std::string& title, const std::string& artwork)
@@ -473,9 +468,6 @@ namespace app
         image_render = std::make_unique<image_renderer>(device, win->swapchainExtent, win->gpuFeatures);
         image_render->setAllocator(allocator);
         simple_render = std::make_unique<simple_renderer>(device, allocator, win->swapchainExtent, win->gpuFeatures);
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-        video_background_render = std::make_unique<render::video_background>(device, allocator, win);
-#endif
         wave_render = std::make_unique<render::wave_renderer>(device, allocator, win->swapchainExtent);
         procedural_wave_render = std::make_unique<render::procedural_wave_renderer>(device, allocator, win->swapchainExtent);
         monthly_background_render =
@@ -533,9 +525,6 @@ namespace app
                 "Monthly-background Vulkan pipeline initialization failed ({}); using the safe clear-colour fallback",
                 error.what());
         }
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-        video_background_render->preload({backgroundRenderPass.get()}, win->config.sampleCount, win->pipelineCache.get());
-#endif
         procedural_wave_render->preload({backgroundRenderPass.get()}, win->config.sampleCount, win->pipelineCache.get());
 
         if(config::CONFIG.backgroundType == config::config::background_type::image) {
@@ -689,7 +678,6 @@ namespace app
         }
 
         menu.preload(device, allocator, *loader);
-        news.preload(device, allocator, *loader);
 
         if(!win->config.headless) {
             ok_sound = sdl::mix::unique_chunk{sdl::mix::LoadWAV(config::CONFIG.resolve_sound(config::CONFIG.asset_directory/"sounds/ok.wav").string().c_str())};
@@ -767,16 +755,10 @@ namespace app
                 monthly_background_failed = true;
                 spdlog::error("Monthly-background Vulkan pipeline initialization failed ({}); using the safe clear-colour fallback", error.what());
             }
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-            video_background_render->preload({backgroundRenderPass.get()}, win->config.sampleCount, win->pipelineCache.get());
-#endif
             procedural_wave_render->preload({backgroundRenderPass.get()}, win->config.sampleCount, win->pipelineCache.get());
             renderPassSamples = win->config.sampleCount;
         }
         procedural_wave_render->prepare(static_cast<int>(swapchainImages.size()));
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-        video_background_render->prepare(imageCount);
-#endif
 
         if(imageCount == 0) {
             font_render->prepare(0);
@@ -1039,12 +1021,6 @@ namespace app
                 for(const auto& path : needed) {
                     const auto ext=path.extension().string();
                     const bool video=ext==".mp4" || ext==".webm" || ext==".mkv" || ext==".mov" || ext==".avi";
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-                    if(video && path==theme->frame.background) {
-                        if(background_video_path!=path) { video_background_render->set_path(path); background_video_path=path; }
-                        continue;
-                    }
-#endif
                     if(path.empty() || video || theme->textures.contains(path)) continue;
                     std::size_t bytes=0;
                     for(const auto& [key, value] : theme->textures) if(value->loaded) bytes+=static_cast<std::size_t>(value->width)*value->height*4;
@@ -1071,16 +1047,7 @@ namespace app
         if (win) {
             win->config.transparentSurface = overlay_ingame;
         }
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-        const bool background_video_active=!background_video_path.empty() && !overlay_ingame &&
-            (config::CONFIG.backgroundType==config::config::background_type::video || theme->frame.background==background_video_path);
-        video_background_render->set_active(background_video_active);
-        video_background_render->tick();
-#endif
         commandBuffer.begin(vk::CommandBufferBeginInfo());
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-        video_background_render->prerender(commandBuffer,frame);
-#endif
         for(auto& overlay : std::views::reverse(overlays)) {
             overlay->prerender(commandBuffer, frame, this);
         }
@@ -1124,9 +1091,7 @@ namespace app
             // Preserve the departing scene's endpoint until its mix reaches
             // zero; switching endpoints on close made the ribbon jump first.
             if(music_scene)procedural_wave_render->music_vertical=reactive_scene?-0.02F:0.26F;
-            const auto& music_snapshot=openxmb::music::service().snapshot();
-            const bool reactive_audio=reactive_scene&&music_snapshot.status==openxmb::music::Status::playing&&!config::CONFIG.enabled("power.reduced.motion",false);
-            procedural_wave_render->set_music_signal(music_snapshot.spectrum,reactive_audio,music_snapshot.generation);
+            procedural_wave_render->set_music_signal({},false,0);
             procedural_wave_render->set_music_mode(music_scene);
             const float music_mix=procedural_wave_render->music_mix();background_gradient.music_mix=music_mix;
             if(flow_scene) {background_gradient.top_rgb={0,0,0};background_gradient.bottom_rgb={0,0,0};background_gradient.music_mix=0;}
@@ -1218,9 +1183,6 @@ namespace app
                 }
             }
 
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-            if(background_video_active) video_background_render->render(commandBuffer,frame,backgroundRenderPass.get(),win->swapchainExtent);
-#endif
             if(theme->active) {
                 gui_renderer theme_gui(commandBuffer,frame,backgroundRenderPass.get(),win->swapchainExtent,font_render.get(),image_render.get(),simple_render.get());
                 if(const auto it=theme->textures.find(theme->frame.background);it!=theme->textures.end() && it->second->loaded)
@@ -2002,7 +1964,7 @@ namespace app
 
     std::shared_ptr<openxmb::themes::ThemeLibrary> shell::theme_library() {
         const auto directory = config::CONFIG.profileConfigPath.empty()
-            ? openxmb::integrations::user_data_directory() / "themes"
+            ? openxmb::desktop::default_data_root() / "themes"
             : config::CONFIG.profileConfigPath.parent_path() / "themes";
         if(!theme->library || theme->library->root() != directory) {
             theme->library = std::make_shared<openxmb::themes::ThemeLibrary>(directory);
@@ -2025,28 +1987,12 @@ namespace app
         load(back_sound,{"NSE.clicker.Cancel.wav","NSE.clicker.Cancel.ogg","back.wav"});
     }
     bool shell::set_audio_device(const std::string& name) {
-        // Settings is reached after closing foreground playback; retire the
-        // background decoder before resetting the shared SDL mixer device.
-        win->waitIdle();
-        #if OPENXMB_ENABLE_VIDEO_PLAYER
-        video_background_render.reset();
-        #endif
-        const bool changed=openxmb::music::service().set_output_device(name);
-        if(changed)active_audio_device=name;
-        #if OPENXMB_ENABLE_VIDEO_PLAYER
-        video_background_render=std::make_unique<render::video_background>(device,allocator,win);
-        video_background_render->preload({backgroundRenderPass.get()},win->config.sampleCount,win->pipelineCache.get());
-        video_background_render->prepare(win->swapchainImageCount);
-        #endif
-        reload_background();return changed;
+        active_audio_device = name;
+        return false;
     }
     void shell::open_panel(const std::string& name) {
         if(name.starts_with("bind.")) {
             emplace_overlay<app::binding_capture>(name.substr(5));
-        } else if(name == "licenses") {
-            emplace_overlay<programs::licenses_screen>(*loader);
-        } else if(name == "about") {
-            emplace_overlay<programs::about_screen>(*loader);
         } else if(name == "themes") {
             emplace_overlay<programs::theme_manager>(*loader, theme_library(),
                 [this](const openxmb::themes::AppliedTheme& value) { apply_theme(value); },
@@ -2057,18 +2003,8 @@ namespace app
             emplace_overlay<programs::library_manager>(name, *loader,
                 [this](const std::filesystem::path& path) { switch_profile(path); });
         } else {
-            emplace_overlay<programs::integration_center>(name, *loader);
+            spdlog::warn("Unsupported panel requested: {}", name);
         }
-    }
-
-    void shell::open_media(const std::filesystem::path& path) {
-        const auto programs = programs::get_open_infos(path, programs::file_info(path));
-        if(programs.empty()) {
-            emplace_overlay<app::message_overlay>("Cannot open file", "No viewer is available for " + path.extension().string(), std::vector<std::string>{"OK"});
-            return;
-        }
-        spdlog::info("Opening media: {} ({})", path.string(), programs.front().name);
-        push_overlay(programs.front().create(path, *loader));
     }
 
     void shell::refresh_desktop_preferences() {
@@ -2212,13 +2148,6 @@ namespace app
     }
 
     void shell::reload_background() {
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-        if(config::CONFIG.backgroundType == config::config::background_type::video) {
-            background_video_path=config::CONFIG.backgroundImage;
-            video_background_render->set_path(background_video_path);
-            video_background_render->set_active(true);
-        }
-#endif
         if(config::CONFIG.backgroundType == config::config::background_type::image) {
             backgroundTexture = std::make_unique<texture>(device, allocator);
             loader->loadTexture(backgroundTexture.get(), config::CONFIG.backgroundImage);
@@ -2351,20 +2280,13 @@ namespace app
         // answers within a frame or two instead of up to a second.
         const double waiting_fps=launching?20.0:(game_has_screen?20.0:(has_input_focus?30.0:2.0));
         win->config.fpsLimit=child_active?waiting_fps:(focused?cap:config::CONFIG.number("power.background.fps",30));
-        auto& player=openxmb::music::service();
-        static bool focus_paused=false;
-        if(!focused&&!config::CONFIG.enabled("audio.background")&&player.snapshot().status==openxmb::music::Status::playing) {player.pause();focus_paused=true;}
-        if(focused&&focus_paused) {player.play();focus_paused=false;}
-        const bool keep_awake=config::CONFIG.enabled("power.keep.awake")&&(player.snapshot().status==openxmb::music::Status::playing || std::any_of(overlays.begin(),overlays.end(),[](const auto& overlay){return overlay->keeps_awake();}));
+        const bool keep_awake=config::CONFIG.enabled("power.keep.awake")&&std::any_of(overlays.begin(),overlays.end(),[](const auto& overlay){return overlay->keeps_awake();});
         static bool awake=false;
         if(awake!=keep_awake) {awake=keep_awake;if(awake) SDL_DisableScreenSaver();else SDL_EnableScreenSaver();
 #ifdef _WIN32
             SetThreadExecutionState(ES_CONTINUOUS|(awake?ES_DISPLAY_REQUIRED|ES_SYSTEM_REQUIRED:0));
 #endif
         }
-        player.set_output_gain(static_cast<float>(config::CONFIG.number("audio.master",100)*config::CONFIG.number("audio.music",100)/10000.0));
-        player.set_background_enabled(config::CONFIG.enabled("music.background"));
-        player.tick();
         if(launching) {
             // The overlay ignores input and is not an action receiver; there
             // is nothing else to tick while the game starts.
@@ -2406,10 +2328,6 @@ namespace app
         if(!pending_panel.empty()) {
             const auto panel = std::exchange(pending_panel, {});
             open_panel(panel);
-        }
-        if(!pending_media.empty()) {
-            const auto path = std::exchange(pending_media, {});
-            open_media(path);
         }
         for(unsigned int i=0; i<2; i++) {
             if(last_controller_axis_input[i]) {
@@ -2632,9 +2550,7 @@ namespace app
     }
 
     void shell::handle(result result) {
-        const auto& music=openxmb::music::service().snapshot();
-        const float quiet=music.status==openxmb::music::Status::playing && config::CONFIG.enabled("audio.duck")?0.22F:1.0F;
-        const int effect_volume=static_cast<int>(128*quiet*config::CONFIG.number("audio.master",100)*config::CONFIG.number("audio.effects",100)/10000.0);
+        const int effect_volume=static_cast<int>(128*config::CONFIG.number("audio.master",100)*config::CONFIG.number("audio.effects",100)/10000.0);
         for(auto* sound:{ok_sound.get(),confirm_sound.get(),cancel_sound.get(),back_sound.get(),question_sound.get()}) if(sound)sdl::mix::VolumeChunk(sound,effect_volume);
         if(result & result::error_rumble) {
             if(config::CONFIG.controllerRumble) {

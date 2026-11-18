@@ -1,11 +1,7 @@
 module;
 
 #include "openxmb/desktop/library.hpp"
-#include "openxmb/music/player.hpp"
 #include "openxmb/desktop/preview_audio.hpp"
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-#include "openxmb/video_worker.hpp"
-#endif
 
 #include <SDL2/SDL.h>
 #undef main
@@ -29,7 +25,6 @@ module openxmb.app;
 import :library_manager;
 import :main;
 import :text_entry;
-import :programs;
 import glm;
 import auroreengine;
 import vulkan_hpp;
@@ -62,16 +57,7 @@ struct library_manager::Preview {
   std::future<void> background_ready;
   fs::path background_path;
   desktop::PreviewAudio audio;
-  bool started{}, owns_duck{};
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-  openxmb::video::worker movie;
-  std::optional<openxmb::video::frame> pending;
-  std::unique_ptr<auroreengine::texture> movie_texture;
-  std::vector<vma::UniqueAllocation> allocations;
-  std::vector<vma::UniqueBuffer> buffers;
-  bool movie_initialized{}, movie_current{};
-  double movie_aspect{16.0 / 9.0};
-#endif
+  bool started{};
   explicit Preview(auroreengine::resource_loader &value)
       : loader(value), device(value.getDevice()), allocator(value.getAllocator()) {}
   ~Preview() {
@@ -82,15 +68,8 @@ struct library_manager::Preview {
   void wait_gpu() {
     if (window) window->waitIdle(); else device.waitIdle();
   }
-  void duck(bool enabled) {
-    if (enabled) { openxmb::music::service().set_external_duck(true); owns_duck = true; }
-    else if (owns_duck) { openxmb::music::service().set_external_duck(false); owns_duck = false; }
-  }
   void stop() {
-    audio.stop(); duck(false);
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-    movie.set_path({}); pending.reset(); movie_current = false;
-#endif
+    audio.stop();
     selected.reset(); selection_key.clear(); started = false;
   }
   void choose(std::shared_ptr<const desktop::Game> game) {
@@ -116,84 +95,19 @@ struct library_manager::Preview {
     if (!started && std::chrono::steady_clock::now() - selected_at >= std::chrono::milliseconds(350)) {
       started = true;
       if (!selected->music.empty()) audio.set_path(selected->music, 0.45f);
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-      if (!selected->preview.empty()) {
-        openxmb::video::options options;
-        options.hardware_acceleration = "off";
-        options.audio_output = selected->music.empty();
-        movie.set_path(selected->preview, options);
-        movie.set_repeat(true);
-        movie.set_volume(0.45f);
-      }
-#endif
     }
     audio.tick();
-    bool audible = audio.active();
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-    if (started && !selected->preview.empty()) {
-      const auto snapshot = movie.snapshot();
-      if (snapshot->ready && snapshot->status != openxmb::video::state::failed) {
-        if (auto frame = movie.take_frame()) pending = std::move(frame);
-        audible = audible || (selected->music.empty() && !snapshot->info.audio_tracks.empty());
-      }
-    }
-#endif
-    duck(audible);
   }
   void upload(vk::CommandBuffer command, int frame, auroreengine::window *value) {
     window = value;
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-    if (!pending) return;
-    const auto &image = *pending;
-    if (!movie_texture || movie_texture->width != image.width || movie_texture->height != image.height || buffers.size() != window->swapchainImageCount) {
-      wait_gpu(); movie_texture.reset(); buffers.clear(); allocations.clear();
-      movie_texture = std::make_unique<auroreengine::texture>(device, allocator, image.width, image.height);
-      buffers.resize(window->swapchainImageCount); allocations.resize(window->swapchainImageCount);
-      const vk::BufferCreateInfo info({}, image.rgba.size(), vk::BufferUsageFlagBits::eTransferSrc, vk::SharingMode::eExclusive);
-      const vma::AllocationCreateInfo memory({}, vma::MemoryUsage::eCpuToGpu);
-      for (std::size_t i = 0; i < buffers.size(); ++i) std::tie(buffers[i], allocations[i]) = allocator.createBufferUnique(info, memory);
-      movie_initialized = false;
-    }
-    if (frame < 0 || static_cast<std::size_t>(frame) >= buffers.size()) return;
-    allocator.copyMemoryToAllocation(image.rgba.data(), allocations[frame].get(), 0, image.rgba.size());
-    const vk::ImageSubresourceRange range(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
-    command.pipelineBarrier(movie_initialized ? vk::PipelineStageFlagBits::eFragmentShader : vk::PipelineStageFlagBits::eTopOfPipe,
-      vk::PipelineStageFlagBits::eTransfer, {}, {}, {}, vk::ImageMemoryBarrier(movie_initialized ? vk::AccessFlags{vk::AccessFlagBits::eShaderRead} : vk::AccessFlags{},
-        vk::AccessFlagBits::eTransferWrite, movie_initialized ? vk::ImageLayout::eShaderReadOnlyOptimal : vk::ImageLayout::eUndefined,
-        vk::ImageLayout::eTransferDstOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, movie_texture->image, range));
-    command.copyBufferToImage(buffers[frame].get(), movie_texture->image, vk::ImageLayout::eTransferDstOptimal,
-      vk::BufferImageCopy(0, 0, 0, vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1), vk::Offset3D(0, 0, 0),
-        vk::Extent3D(static_cast<std::uint32_t>(image.width), static_cast<std::uint32_t>(image.height), 1)));
-    command.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader, {}, {}, {},
-      vk::ImageMemoryBarrier(vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eShaderRead, vk::ImageLayout::eTransferDstOptimal,
-        vk::ImageLayout::eShaderReadOnlyOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, movie_texture->image, range));
-    movie_initialized = movie_current = true; movie_aspect = image.aspect_ratio; pending.reset();
-#else
     (void)command; (void)frame;
-#endif
   }
-  bool has_movie() const {
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-    return selected && movie_texture && movie_current;
-#else
-    return false;
-#endif
-  }
+  bool has_movie() const { return false; }
   void draw_background(auroreengine::gui_renderer &r) {
     if (selected && background && background->loaded)
       r.draw_image(background->imageView.get(), 0.0f, 0.0f, static_cast<float>(r.aspect_ratio), 1.0f, {1.0f, 1.0f, 1.0f, 0.80f});
   }
-  void draw_movie(auroreengine::gui_renderer &r) {
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-    if (!has_movie()) return;
-    const float width = 0.25f * static_cast<float>(r.aspect_ratio);
-    const float height = std::min(0.33f, width / static_cast<float>(std::max(0.1, movie_aspect)));
-    r.draw_rect({0.665f, 0.275f}, {0.26f, height + 0.02f}, {0.0f, 0.0f, 0.0f, 0.65f});
-    r.draw_image(movie_texture->imageView.get(), 0.67f, 0.285f, width, height);
-#else
-    (void)r;
-#endif
-  }
+  void draw_movie(auroreengine::gui_renderer &r) { (void)r; }
 };
 
 library_manager::library_manager(std::string section,
@@ -251,12 +165,9 @@ void library_manager::confirm(std::string title, std::function<void()> accept) {
 }
 void library_manager::open_file(fs::path file) {
   preview_suspended_ = true; preview_->stop();
-  pending_ = [this, file = std::move(file)](app::shell *shell) {
+  pending_ = [this, file = std::move(file)](app::shell *) {
     attempt([&] {
-      const auto handlers = get_open_infos(file, file_info(file));
-      for (const auto &handler : handlers) if (!handler.is_external) {
-        shell->push_overlay(handler.create(file, loader_)); return;
-      }
+      (void)file;
       throw std::runtime_error("No native viewer is registered for this file type");
     });
   };
@@ -406,7 +317,6 @@ void library_manager::refresh() {
     for (const auto &[label, member] : media) add(label, (game.*member).string(), [this, game, label, member] { game_field(label + " path", (game.*member).string(), [member](auto &g, auto v) { g.*member = std::move(v); }); }, label == "Icon image" || label == "Background image" ? game.*member : fs::path{});
     if (!game.background.empty()) add("View background artwork", game.background.filename().string(), [this, game] { open_file(game.background); }, game.background);
     if (!game.preview.empty()) add("Play video preview", game.preview.filename().string(), [this, game] { open_file(game.preview); });
-    if (!game.music.empty()) add("Play preview music", game.music.filename().string(), [this, game] { if (!openxmb::music::service().set_queue({{game.music, game.title}})) throw std::runtime_error(openxmb::music::service().snapshot().error); message_ = "Playing game preview music"; });
     add("Optional RAWG artwork provider", library_->artwork_provider_available() ? "Enabled and key is configured" : "Disabled or key absent; local artwork remains available", [this] {
       ask("Artwork key environment variable (no key values)", "RAWG_API_KEY", [this](std::string variable) { library_->set_artwork_provider(true, std::move(variable)); message_ = "Provider enabled. Supply the key securely in environment settings."; });
     });

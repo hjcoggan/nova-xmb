@@ -26,7 +26,6 @@ module;
 #include "../../localization/shell_locale.hpp"
 #include "media_motion.hpp"
 #include "openxmb/xmb/background.hpp"
-#include "openxmb/desktop/library.hpp"
 #include "openxmb/themes/library.hpp"
 #include "openxmb/xmb/settings_actions.hpp"
 #include "openxmb/xmb/settings_controller.hpp"
@@ -63,9 +62,6 @@ import :menu_utils;
 import :choice_overlay;
 import :xmb_presentation;
 import :applications_menu;
-import :settings_menu;
-import :users_menu;
-import :files_menu;
 import :desktop_settings;
 import :message_overlay;
 import :text_entry;
@@ -157,28 +153,6 @@ struct contained_layout {
     const auto elapsed_seconds = std::chrono::duration<double>(now - started).count();
     const auto duration_seconds = std::chrono::duration<double>(duration).count();
     return std::clamp(elapsed_seconds / duration_seconds, 0.0, 1.0);
-}
-
-[[nodiscard]] std::filesystem::path preferred_icon(
-    const std::filesystem::path& asset_directory,
-    std::string_view compatibility_name,
-    std::string_view clean_name
-) {
-    const auto bundled = asset_directory / "icons" / compatibility_name;
-    std::error_code bundled_error;
-    if(std::filesystem::is_regular_file(bundled, bundled_error) && !bundled_error) {
-        return bundled;
-    }
-    const auto compatibility = asset_directory / "compat/xmb-ui-compat/icons" / compatibility_name;
-    std::error_code error;
-    if(std::filesystem::is_regular_file(compatibility, error) && !error) {
-        return compatibility;
-    }
-
-    const auto clean = asset_directory / "icons" / clean_name;
-    spdlog::debug("Compatibility icon {} is unavailable; using clean icon {}",
-        compatibility.string(), clean.string());
-    return clean;
 }
 
 [[nodiscard]] bool file_exists(const std::filesystem::path& path) noexcept {
@@ -777,46 +751,12 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
     menus.clear();
 
     const auto& asset_directory = config::CONFIG.asset_directory;
-    menus.reserve(16);
-    const auto panel_entry = [&](std::string label, std::string section, std::string icon = "icon_category_settings.png") {
-        return make_simple<menu::action_menu_entry>(std::move(label), asset_directory/"icons"/icon, loader,
-            [xmb = this->xmb, section = std::move(section)] { xmb->open_panel(section); return result::success; });
-    };
+    menus.reserve(8);
     const auto panel_menu = [&](std::string label, std::filesystem::path icon,
                                 std::vector<std::unique_ptr<menu::menu_entry>> rows) {
         return make_simple<menu::simple_menu>(std::move(label), std::move(icon), loader, std::move(rows));
     };
-    // shell.hide-empty-categories: drop media categories whose folder is
-    // missing or empty so the crossbar shows no dead-end tiles.
-    const auto folder_has_content = [&](const std::filesystem::path& folder) {
-        if(!config::CONFIG.hide_empty_categories()) {
-            return true;
-        }
-        std::error_code error;
-        if(!std::filesystem::is_directory(folder, error)) {
-            return false;
-        }
-        for(std::filesystem::directory_iterator it(folder,
-                std::filesystem::directory_options::skip_permission_denied, error), end;
-            it != end; it.increment(error)) {
-            if(error) {
-                break;
-            }
-            if(!it->path().filename().string().starts_with('.')) {
-                return true;
-            }
-        }
-        return false;
-    };
-    if(!config::CONFIG.hidden_category("users")) {
-        std::vector<std::unique_ptr<menu::menu_entry>> rows;
-        rows.push_back(panel_entry("Local Profiles", "users", "icon_category_users.png"));
-        rows.push_back(panel_entry("System Tools", "system", "icon_action_poweroff.png"));
-        rows.push_back(panel_entry("Custom Sections", "custom", "icon_files_folder.png"));
-        rows.push_back(make_simple<menu::users_menu>("Operating System Users", asset_directory/"icons/icon_category_users.png", loader, xmb, loader));
-        menus.push_back(panel_menu("Users", preferred_icon(asset_directory,"xmb_icon_000.png","icon_category_users.png"),std::move(rows)));
-    }
-    if(config::CONFIG.console_mode()&&!config::CONFIG.hidden_category("power")) {
+    if(!config::CONFIG.hidden_category("power")) {
         std::vector<std::unique_ptr<menu::menu_entry>> power_rows;
         const auto power_action_entry = [&](std::string label, const char* icon, const char* cmd) {
             return make_simple<menu::action_menu_entry>(std::move(label), asset_directory/"icons"/icon, loader,
@@ -830,35 +770,13 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
         power_rows.push_back(power_action_entry("Power Off", "icon_action_poweroff.png", "systemctl poweroff"));
         menus.push_back(panel_menu("Power", asset_directory/"icons/icon_category_power.png", std::move(power_rows)));
     }
-    if(!config::CONFIG.hidden_category("settings"))
-    menus.push_back(make_simple<menu::settings_menu>("Settings"_(),
-        config::CONFIG.console_mode()
-            ? asset_directory/"icons/icon_category_settings.png"
-            : preferred_icon(asset_directory, "xmb_icon_001.png", "icon_category_settings.png"),
-        loader, xmb, loader));
-    if(!config::CONFIG.hidden_category("photo")&&folder_has_content(config::CONFIG.pictures_path()))
-    menus.push_back(make_simple<menu::files_menu>("Photo"_(),
-        preferred_icon(asset_directory, "xmb_icon_002.png", "icon_category_photo.png"), loader, xmb,
-        config::CONFIG.pictures_path(), loader, menu::files_menu_profile::photo));
-    if(!config::CONFIG.hidden_category("music")&&folder_has_content(config::CONFIG.music_path()))
-    menus.push_back(make_simple<menu::files_menu>("Music"_(),
-        preferred_icon(asset_directory, "xmb_icon_003.png", "icon_category_music.png"), loader, xmb,
-        config::CONFIG.music_path(), loader, menu::files_menu_profile::music));
-    if(!config::CONFIG.hidden_category("video")&&folder_has_content(config::CONFIG.videos_path()))
-    menus.push_back(make_simple<menu::files_menu>("Video"_(),
-        preferred_icon(asset_directory, "xmb_icon_004.png", "icon_category_video.png"), loader, xmb,
-        config::CONFIG.videos_path(), loader, menu::files_menu_profile::video));
-    if(!config::CONFIG.hidden_category("tv")) {
-        std::vector<std::unique_ptr<menu::menu_entry>> rows;
-        rows.push_back(make_simple<menu::files_menu>("Video Library",asset_directory/"icons/theme/icon_video.png",loader,xmb,config::CONFIG.videos_path(),loader,menu::files_menu_profile::video));
-        if constexpr(OPENXMB_ENABLE_BROWSER != 0)
-            rows.push_back(panel_entry("Internet Browser","browser","theme/icon_browser.png"));
-        menus.push_back(panel_menu("TV / Video Services",asset_directory/"icons/theme/icon_tv.png",std::move(rows)));
+    if(!config::CONFIG.hidden_category("settings")) {
+        menus.push_back(panel_menu("Settings"_(), asset_directory/"icons/icon_category_settings.png", {}));
     }
     {
-        // The library: Games, Android and Applications. Each item is in the
-        // column the player put it in, else the one that suits it; a column
-        // with nothing in it is not shown.
+        // The library: Switch, Windows, Linux, Android and Applications. Each
+        // item is in the column the player put it in, else the one that suits
+        // it; a column with nothing in it is not shown.
         std::array<std::vector<menu::app_info>,menu::library_columns.size()> columns;
         for(auto& item : menu::scan_library()) {
             const auto column=menu::library_column_of(item);
@@ -878,34 +796,6 @@ void main_menu::preload(vk::Device device, vma::Allocator allocator, auroreengin
                 asset_directory/"icons"/column.icon,loader,std::string(column.id),xmb,loader,std::move(columns[i])));
         }
     }
-    if(!config::CONFIG.hidden_category("network")) {
-        std::vector<std::unique_ptr<menu::menu_entry>> rows;
-        if constexpr(OPENXMB_ENABLE_BROWSER != 0)
-            rows.push_back(panel_entry("Internet Browser", "browser", "icon_category_network.png"));
-        rows.push_back(panel_entry("System Tools", "system"));
-        rows.push_back(panel_entry("OpenXMB Settings", "settings"));
-        menus.push_back(panel_menu("Network",preferred_icon(asset_directory,"xmb_icon_006.png","icon_category_network.png"),std::move(rows)));
-    }
-    if(!config::CONFIG.hidden_category("playstation-network")) {
-        std::vector<std::unique_ptr<menu::menu_entry>> rows;
-        rows.push_back(panel_entry("Local Account", "account", "xmb_icon_psn.png"));
-        rows.push_back(panel_entry("Trophy Collection", "trophies", "theme/icon_trophy.png"));
-        menus.push_back(panel_menu("PlayStation Network",preferred_icon(asset_directory,"xmb_icon_psn.png","icon_category_network.png"),std::move(rows)));
-    }
-    if(!config::CONFIG.hidden_category("friends")) {
-        std::vector<std::unique_ptr<menu::menu_entry>> rows;
-        rows.push_back(panel_entry("Local Friends", "friends", "icon_category_friends.png"));
-        rows.push_back(panel_entry("Local Account", "account", "xmb_icon_psn.png"));
-        menus.push_back(panel_menu("Friends",preferred_icon(asset_directory,"xmb_icon_007.png","icon_category_friends.png"),std::move(rows)));
-    }
-    try {
-        openxmb::desktop::Library library;
-        for(const auto& section : library.custom_sections())
-            if(folder_has_content(section.folder))
-            menus.push_back(make_simple<menu::files_menu>(section.title,
-                section.icon.empty() ? asset_directory/"icons/icon_files_folder.png" : section.icon,
-                loader,xmb,section.folder,loader,menu::files_menu_profile::generic));
-    } catch(const std::exception& error) { spdlog::warn("Could not load custom sections: {}",error.what()); }
 
     if(const auto initial_category = initial_category_index_from_env()) {
         if(*initial_category >= 0 &&

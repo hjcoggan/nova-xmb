@@ -63,7 +63,6 @@ import :choice_overlay;
 import :launch_overlay;
 import :main_menu;
 import :message_overlay;
-import :news_display;
 import :pause_overlay;
 import :progress_overlay;
 import :startup_overlay;
@@ -114,12 +113,10 @@ namespace app
             void open_panel(const std::string& name);
             bool set_audio_device(const std::string& device);
             std::string audio_device_name() const { return active_audio_device; }
-            void open_media(const std::filesystem::path& path);
             void switch_profile(const std::filesystem::path& path);
             void apply_theme(const openxmb::themes::AppliedTheme& theme);
             std::shared_ptr<openxmb::themes::ThemeLibrary> theme_library();
             void queue_panel(std::string name) { pending_panel = std::move(name); }
-            void queue_media(std::filesystem::path path) { pending_media = std::move(path); }
 
             void dispatch(const event& event);
             template<typename T, typename... Args>
@@ -448,17 +445,11 @@ namespace app
             vk::UniqueDescriptorPool blurExtraDescriptorPool;
 
             std::unique_ptr<texture> backgroundTexture;
-#if OPENXMB_ENABLE_VIDEO_PLAYER
-            std::unique_ptr<render::video_background> video_background_render;
-            std::filesystem::path background_video_path;
-#endif
             // Keep JSON-heavy theme state out of the exported shell BMI.
             struct theme_state;
             std::unique_ptr<theme_state> theme;
             std::string pending_panel;
-            std::filesystem::path pending_media;
             main_menu menu{this};
-            news_display news{this};
             std::array<std::unique_ptr<texture>, std::to_underlying(action::_length)> buttonTextures;
             std::array<std::string,std::to_underlying(action::_length)> button_labels;
             std::unique_ptr<texture> cursorTexture;
