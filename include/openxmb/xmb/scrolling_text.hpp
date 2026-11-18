@@ -80,12 +80,13 @@ class scrolling_text {
 
     const auto [phase, cursor] = motion(now_ms);
     (void)phase;
-    const auto first = static_cast<std::size_t>(cursor);
-    const auto whole = static_cast<float>(first);
-    // One extra glyph covers the fractional shift; the caller clips it.
-    const auto count = std::min(fitting + 1, text_.size() - first);
-    return {first, count,
-            static_cast<float>((cursor - whole) * glyph_width_px), false};
+    // Move a whole glyph at a time. A fractional offset would show half a
+    // letter at the slot edge, which the no-mid-glyph rule forbids.
+    (void)glyph_width_px;
+    const auto first = std::min(static_cast<std::size_t>(cursor + 0.5),
+                                text_.size() - fitting);
+    const auto count = std::min(fitting, text_.size() - first);
+    return {first, count, 0.0F, false};
   }
 
  private:
