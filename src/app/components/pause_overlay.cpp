@@ -37,6 +37,8 @@ namespace app {
 
 namespace {
 
+namespace ui = openxmb::xmb::ui;
+
 float smooth01(float t) {
     t = std::clamp(t, 0.0f, 1.0f);
     return t * t * (3.0f - 2.0f * t);
@@ -338,8 +340,9 @@ void pause_overlay::render(auroreengine::gui_renderer& renderer, shell* xmb) {
         return;
     }
 
-    // Layout on the 8-unit grid: padding 32, rows 72 high with 8 between.
-    constexpr float card_w = 656.0f, row_h = 72.0f, row_gap = 8.0f, header_h = 136.0f;
+    // Layout on the one 4-point grid: padding 32, rows 72 high with 8 between.
+    constexpr float card_w = 656.0f, row_h = 72.0f, header_h = 136.0f;
+    const float row_gap = ui::px(ui::space::xs);
     const float guide_h = guide_lines.empty() ? 0.0f : 24.0f + 32.0f * static_cast<float>(guide_lines.size());
     const float card_h = header_h + row_count * (row_h + row_gap) - row_gap + guide_h + glass::card_padding;
     const float card_x = 960.0f - card_w * 0.5f;
@@ -360,9 +363,13 @@ void pause_overlay::render(auroreengine::gui_renderer& renderer, shell* xmb) {
     };
     const glm::vec4 accent{glass::srgb_to_linear(glass::accent_srgb[0]), glass::srgb_to_linear(glass::accent_srgb[1]),
                            glass::srgb_to_linear(glass::accent_srgb[2]), 1.0f};
-    const auto slider = [&](float y, int percent, bool focused) {
+    const auto slider = [&](float y, int percent, bool focused, float label_w) {
         constexpr float track_w = 200.0f, track_h = 8.0f;
-        const float track_x = row_x + 256.0f, track_y = y + row_h * 0.5f - track_h * 0.5f;
+        // Start the track after the widest label plus one spacing step, so
+        // the focused left arrow never lands on "Brightness".
+        const float track_x = std::max(row_x + 256.0f,
+            row_x + 32.0f + label_w + ui::px(ui::space::lg));
+        const float track_y = y + row_h * 0.5f - track_h * 0.5f;
         const float fill = track_w * static_cast<float>(std::clamp(percent, 0, 100)) / 100.0f;
         c.rect(track_x, track_y, track_w, track_h, {1.0f, 1.0f, 1.0f, 0.25f}, track_h * 0.5f);
         if (fill > 1.0f) c.rect(track_x, track_y, fill, track_h, accent, track_h * 0.5f);
@@ -393,7 +400,8 @@ void pause_overlay::render(auroreengine::gui_renderer& renderer, shell* xmb) {
         const float baseline = y + row_h * 0.5f + 11.0f;
         if (i == row_volume || i == row_brightness) {
             c.text(labels[static_cast<std::size_t>(i)], row_x + 32.0f, baseline, 28, primary);
-            slider(y, i == row_volume ? volume_pct : brightness_pct, focused);
+            slider(y, i == row_volume ? volume_pct : brightness_pct, focused,
+                   text_width(labels[static_cast<std::size_t>(i)], 28));
         } else {
             c.text(labels[static_cast<std::size_t>(i)], 960, baseline, 30, primary, 0.0f, true);
         }
