@@ -18,6 +18,7 @@
 
 module;
 #include "openxmb/xmb/glass.hpp"
+#include "openxmb/xmb/scrolling_text.hpp"
 #include "../../localization/ui_literal_text.hpp"
 
 #include "openxmb/xmb/catalog.hpp"
@@ -2019,15 +2020,25 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
 
             const auto alpha = (focused ? kFocusAlpha : kInactiveItemAlpha) * alpha_multiplier * edge_fade;
             auto& entry = menu.get_submenu(static_cast<unsigned int>(index));
+            // A slot, not an unbounded string: the lens used to grow with the
+            // title until it ran off the panel. Long labels scroll when
+            // focused and ellipsise when not; the lens uses the same slot.
+            const double label_left = SettingsSceneMetrics::label_x + column_label_shift + x_shift;
+            const double label_right_edge =
+                static_cast<double>(layout.framebuffer_width - layout.offset_x) / layout.scale -
+                openxmb::xmb::ui::px(openxmb::xmb::ui::space::lg);
+            const auto label_room = std::max(120.0, label_right_edge - label_left);
+            const auto measure_label = [&](std::string_view text) {
+                return static_cast<double>(renderer.text_width_pixels(text,
+                    static_cast<float>(SettingsSceneMetrics::active_label_size * layout.scale))) / layout.scale;
+            };
             if(focused && config::CONFIG.console_mode()) {
                 // The focused row rests on a lens of clear glass; while it is
                 // being moved, on a lit capsule. Same shape in every column.
-                const double label_left = SettingsSceneMetrics::label_x + column_label_shift + x_shift;
-                double text_right = label_left + renderer.text_width_pixels(entry.get_name(),
-                    static_cast<float>(SettingsSceneMetrics::active_label_size * layout.scale)) / layout.scale;
+                double text_right = std::min(label_left + measure_label(entry.get_name()), label_right_edge);
                 if(!entry.get_description().empty())
-                    text_right = std::max(text_right, label_left + renderer.text_width_pixels(entry.get_description(),
-                        static_cast<float>(SettingsSceneMetrics::description_size * layout.scale)) / layout.scale);
+                    text_right = std::max(text_right, std::min(label_left + renderer.text_width_pixels(entry.get_description(),
+                        static_cast<float>(SettingsSceneMetrics::description_size * layout.scale)) / layout.scale, label_right_edge));
                 const auto height = lens::height(extent);
                 const bool current_column = &menu == menus[static_cast<std::size_t>(selected)].get();
                 const bool grabbed = move_mode && current_column;
@@ -2064,7 +2075,35 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
             const float item_pulse = 0.8F + 0.4F * std::sin(static_cast<float>(seconds_from_time_point(now)) * 1.848F);
             const auto label_px = static_cast<float>(layout.offset_x + (SettingsSceneMetrics::label_x + wide_label_shift + x_shift) * layout.scale);
             const auto label_py = static_cast<float>(layout.offset_y + (center_y + (focused ? 3.0 : 11.0)) * layout.scale);
-            renderer.draw_text_pixels(entry.get_name(), label_px, label_py,
+            const std::string_view name(entry.get_name());
+            const auto fitting = openxmb::xmb::ui::fitting_count(name,static_cast<float>(label_room),measure_label);
+            const float glyph_px = fitting ? static_cast<float>(measure_label(name.substr(0,1))) : 1.0F;
+            std::string_view shown=name;
+            float shift=0.0F;
+            if(name.size()>fitting && fitting>0) {
+                if(focused) {
+                    // The one slot is shared by every column; only the item
+                    // with focus ever animates.
+                    static openxmb::xmb::ui::scrolling_text slot;
+                    static std::string_view bound;
+                    const double now_ms=std::chrono::duration<double,std::milli>(now.time_since_epoch()).count();
+                    if(bound.data()!=name.data()||bound.size()!=name.size()||!slot.focused())
+                        slot.set_text(name,fitting,true,now_ms);
+                    bound=name;
+                    const auto run=slot.sample(now_ms,glyph_px);
+                    shown=name.substr(run.first,run.count);
+                    shift=-run.offset_px;
+                } else {
+                    static std::string truncated;
+                    truncated.clear();
+                    truncated.append(name.substr(0,fitting));
+                    while(!truncated.empty()&&(static_cast<unsigned char>(truncated.back())&0xC0)==0x80) truncated.pop_back();
+                    while(!truncated.empty()&&truncated.back()==' ') truncated.pop_back();
+                    if(!truncated.empty()) truncated+="\xE2\x80\xA6";
+                    shown=truncated;
+                }
+            }
+            renderer.draw_text_pixels(shown, label_px + shift * layout.scale, label_py,
                 static_cast<float>(label_size * layout.scale),
                 {text_value, text_value, text_value, static_cast<float>(alpha)},
                 focused ? 0.72F : 0.7F, focused ? item_pulse : 0.0F);
