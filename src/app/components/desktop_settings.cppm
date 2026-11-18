@@ -414,9 +414,19 @@ inline std::vector<NovaBtDevice> nova_scan_bt_devices() {
             if(sp==std::string_view::npos) continue;
             const auto mac=std::string(rest.substr(0,sp));
             const auto name=nova_trim(rest.substr(sp+1));
-            // Keep an unnamed device's name empty. A raw MAC must never be
-            // shown on the panel or end up in a screenshot.
-            if(!mac.empty()) items.emplace_back(mac,name);
+            // Some beacons advertise their address as their name. Never show
+            // a MAC-shaped string on the panel or in a screenshot.
+            const bool address_like=[&]{
+                if(name.size()<8) return false;
+                int groups=0;bool hex=false;
+                for(const char ch:name) {
+                    if(ch=='-'||ch==':') { if(!hex) return false; ++groups; hex=false; }
+                    else if(std::isxdigit(static_cast<unsigned char>(ch))) hex=true;
+                    else return false;
+                }
+                return hex&&groups>=4;
+            }();
+            if(!mac.empty()) items.emplace_back(mac,address_like?std::string{}:name);
         }
         return items;
     };
