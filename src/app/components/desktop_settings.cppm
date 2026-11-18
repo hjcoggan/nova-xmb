@@ -414,7 +414,9 @@ inline std::vector<NovaBtDevice> nova_scan_bt_devices() {
             if(sp==std::string_view::npos) continue;
             const auto mac=std::string(rest.substr(0,sp));
             const auto name=nova_trim(rest.substr(sp+1));
-            if(!mac.empty()) items.emplace_back(mac,name.empty()?mac:name);
+            // Keep an unnamed device's name empty. A raw MAC must never be
+            // shown on the panel or end up in a screenshot.
+            if(!mac.empty()) items.emplace_back(mac,name);
         }
         return items;
     };
@@ -942,10 +944,12 @@ export void activate(shell* shell,const openxmb::xmb::CatalogNode& node) {
                 return;
             }
             std::vector<std::string> labels;
-            for(const auto& d:*found) {
-                // A raw MAC address is private and wrapped mid-string on the
-                // panel. Show the device's name, or a numbered generic name.
-                std::string label=d.name.empty()?"Bluetooth device":d.name;
+            for(std::size_t idx=0;idx<found->size();++idx) {
+                const auto& d=(*found)[idx];
+                // BlueZ reports the MAC as the name for unnamed devices;
+                // never surface that on the panel.
+                std::string label=d.name.empty()
+                    ? "Bluetooth device "+std::to_string(idx+1) : d.name;
                 if(d.connected) label+=" [Connected]";
                 else if(d.paired) label+=" [Paired]";
                 labels.push_back(std::move(label));
