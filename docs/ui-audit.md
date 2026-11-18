@@ -76,11 +76,13 @@ is named after the file linked there.
    launch, but empty states are unproven; the Bluetooth dialog title and
    Wi-Fi list are ragged; two screens show a flash of the underlying hint bar.
 
-## Phase 3 — removal candidates (approval required before deletion)
+## Phase 3 — removal candidates (owner-approved, except Sparkles/Wave)
 
 Each line is a setting, entry or screen that does not serve a handheld game
 launcher with sleep, pause, resume and quit, or that duplicates another one.
-Nothing here is deleted yet.
+The owner approved these with two changes: Sparkles and Wave stay, and the
+AuroreEngine patch is acceptable. The deletions are in the feedback-round
+commits below; Sparkles and Wave remain in the Theme group.
 
 | Candidate | One-line reason |
 |---|---|
@@ -151,6 +153,26 @@ the captures; the SSID/BSSID rows in the Wi-Fi screenshots are painted out.
 - The launch-failure error overlay and an empty game column: the failing
   temporary manifest was skipped by the library loader, and this device has
   no empty column. Both remain code-only.
-- Continuous (squircle) corners: the engine shader uses a circular
-  `roundedBox`; changing it means an AuroreEngine patch, so the concentric
-  circular scale is used instead.
+- Aeroplane glyph on the panel (toggling radios would drop SSH); verified in
+  code only. Squircle corners were added in the feedback round below.
+
+## Owner feedback round (same branch)
+
+The owner approved the removal list with two changes — keep Sparkles and Wave,
+and patch AuroreEngine — plus further work, all implemented here:
+
+| Feedback | Where | Device evidence |
+|---|---|---|
+| Smooth the overflow scroll | `scrolling_text.hpp` now carries a fractional glyph offset and one spare leading glyph; a contract test asserts a sub-glyph offset. | [frame a](ui-audit-shots/fb-smooth-a.png) / [frame b](ui-audit-shots/fb-smooth-b.png) show different sub-glyph positions on the focused long title. |
+| Squircle corners | `nova/aurore-engine.patch`: exponent-4 superellipse in the corner region instead of a circular `roundedBox`. | [crossbar](ui-audit-shots/fb-00-crossbar.png) — glass corners flow continuously. |
+| Restore the Switch games list | Cherry-picked the Switch / Windows / Linux library columns commit from the existing `feat/library-switch-windows-linux` branch. | [crossbar](ui-audit-shots/fb-00-crossbar.png) — Switch, Windows and Linux columns are back. |
+| Keep Sparkles and Wave | Both settings remain in the Theme group's console rows. | — |
+| Status bar icons + Bluetooth/aeroplane | Wi-Fi and battery use the accent material and the clock's hairline; an unblocked Bluetooth radio shows its rune; both radios blocked shows one aeroplane glyph. | [crossbar](ui-audit-shots/fb-00-crossbar.png) — accent battery/Wi-Fi and the Bluetooth rune. Aeroplane glyph was **not** toggled on the device (it would drop SSH); it is code-only. |
+| Analog clock toggle, off by default | New Display setting `status.analog.clock`; the renderer only draws the face when enabled. | [off](ui-audit-shots/fb-display-rows.png), [on](ui-audit-shots/fb-clock-on.png). Left off. |
+| Console mode only | Removed the approved rows and their actions: Interface Scale, Frame Limit, Restore Original Theme, Startup Intro, System Information, Licences, Restore Default Settings, and the desktop diagnostics. Display now has exactly Screen Brightness, Show FPS and Analog Clock. | [Display rows](ui-audit-shots/fb-display-rows.png) |
+| Duplicate power sheet | `POWER_MENU` focuses the existing Power column at Sleep; the second choice overlay and its member/bookkeeping are deleted. | [Power column](ui-audit-shots/fb-power-column.png) |
+
+After the feedback build: `nix build .#openxmb-tests --override-input nova-xmb
+path:…` — 52/52 pass. FPS 118.76 on the crossbar with Show FPS on (no worse
+than the 99.43 baseline). Show FPS is off again, brightness 50%, `nova-session`
+active with no failed units, and the temporary long-title game removed.
