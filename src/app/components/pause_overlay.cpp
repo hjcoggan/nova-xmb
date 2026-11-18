@@ -361,8 +361,8 @@ void pause_overlay::render(auroreengine::gui_renderer& renderer, shell* xmb) {
     const auto text_width = [&](const std::string& text, float size) {
         return renderer.text_width_pixels(text, size * c.scale * config::CONFIG.textScale) / c.scale;
     };
-    const glm::vec4 accent{glass::srgb_to_linear(glass::accent_srgb[0]), glass::srgb_to_linear(glass::accent_srgb[1]),
-                           glass::srgb_to_linear(glass::accent_srgb[2]), 1.0f};
+    const auto accent_rgb = glass::active_accent_linear();
+    const glm::vec4 accent{accent_rgb[0], accent_rgb[1], accent_rgb[2], 1.0f};
     const auto slider = [&](float y, int percent, bool focused, float label_w) {
         constexpr float track_w = 200.0f, track_h = 8.0f;
         // Start the track after the widest label plus one spacing step, so

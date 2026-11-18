@@ -2,6 +2,18 @@
 
 #include <charconv>
 #include <cmath>
+#include <cstring>
+#include <string>
+
+#ifndef _WIN32
+#include <arpa/inet.h>
+#include <cerrno>
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 namespace openxmb::xmb {
 namespace {
@@ -101,6 +113,157 @@ ClockHandAngles resolve_clock_hand_angles(const StatusBarTime &time) noexcept {
       .hour_radians = twelve_oclock + hour / 12.0F * full_turn,
       .minute_radians = twelve_oclock + minute / 60.0F * full_turn,
   };
+}
+
+std::array<StatusBarElement, 4>
+parse_status_bar_order(std::string_view spec) noexcept {
+  std::array<StatusBarElement, 4> out{};
+  std::size_t count = 0;
+  auto push_unique = [&](StatusBarElement elem) {
+    for (std::size_t i = 0; i < count; ++i) {
+      if (out[i] == elem) {
+        return;
+      }
+    }
+    if (count < out.size()) {
+      out[count++] = elem;
+    }
+  };
+  while (!spec.empty()) {
+    const auto comma = spec.find(',');
+    auto token = spec.substr(0, comma);
+    while (!token.empty() && token.front() == ' ') token.remove_prefix(1);
+    while (!token.empty() && token.back() == ' ') token.remove_suffix(1);
+    if (token == "battery") {
+      push_unique(StatusBarElement::battery);
+    } else if (token == "wifi") {
+      push_unique(StatusBarElement::wifi);
+    } else if (token == "bluetooth") {
+      push_unique(StatusBarElement::bluetooth);
+    } else if (token == "clock") {
+      push_unique(StatusBarElement::clock);
+    }
+    if (comma == std::string_view::npos) {
+      break;
+    }
+    spec.remove_prefix(comma + 1);
+  }
+  for (const auto fallback : kDefaultStatusBarOrder) {
+    push_unique(fallback);
+  }
+  return out;
+}
+
+std::string
+format_status_bar_order(const std::array<StatusBarElement, 4> &order) {
+  std::string result;
+  for (std::size_t i = 0; i < order.size(); ++i) {
+    if (i > 0) {
+      result.push_back(',');
+    }
+    switch (order[i]) {
+      case StatusBarElement::battery: result += "battery"; break;
+      case StatusBarElement::wifi: result += "wifi"; break;
+      case StatusBarElement::bluetooth: result += "bluetooth"; break;
+      case StatusBarElement::clock: result += "clock"; break;
+    }
+  }
+  return result;
+}
+
+std::string_view status_bar_element_label(StatusBarElement element) noexcept {
+  switch (element) {
+    case StatusBarElement::battery: return "Battery";
+    case StatusBarElement::wifi: return "Wi-Fi";
+    case StatusBarElement::bluetooth: return "Bluetooth";
+    case StatusBarElement::clock: return "Clock";
+  }
+  return {};
+}
+
+bool probe_wifi_internet(std::string_view iface) {
+#ifdef _WIN32
+  (void)iface;
+  return true;
+#else
+  if (iface.empty()) {
+    return false;
+  }
+  struct ifaddrs *ifaddr = nullptr;
+  if (getifaddrs(&ifaddr) != 0) {
+    return false;
+  }
+  struct sockaddr_in v4_src{};
+  bool has_v4 = false;
+  struct sockaddr_in6 v6_src{};
+  bool has_v6 = false;
+  for (auto *ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+    if (!ifa->ifa_addr || !ifa->ifa_name || iface != ifa->ifa_name) {
+      continue;
+    }
+    if (ifa->ifa_addr->sa_family == AF_INET && !has_v4) {
+      std::memcpy(&v4_src, ifa->ifa_addr, sizeof(v4_src));
+      has_v4 = true;
+    } else if (ifa->ifa_addr->sa_family == AF_INET6 && !has_v6) {
+      const auto *addr6 = reinterpret_cast<const sockaddr_in6 *>(ifa->ifa_addr);
+      if (!IN6_IS_ADDR_LINKLOCAL(&addr6->sin6_addr)) {
+        v6_src = *addr6;
+        has_v6 = true;
+      }
+    }
+  }
+  freeifaddrs(ifaddr);
+
+  auto try_connect = [](int family, const struct sockaddr *src, socklen_t src_len,
+                        const struct sockaddr *dst, socklen_t dst_len) -> bool {
+    const int fd = ::socket(family, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    if (fd < 0) {
+      return false;
+    }
+    if (::bind(fd, src, src_len) != 0) {
+      ::close(fd);
+      return false;
+    }
+    const int rc = ::connect(fd, dst, dst_len);
+    bool ok = (rc == 0);
+    if (rc != 0 && errno == EINPROGRESS) {
+      pollfd pfd{fd, POLLOUT, 0};
+      if (::poll(&pfd, 1, 1500) > 0 && (pfd.revents & POLLOUT)) {
+        int err = 0;
+        socklen_t len = sizeof(err);
+        if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) == 0 && err == 0) {
+          ok = true;
+        }
+      }
+    }
+    ::close(fd);
+    return ok;
+  };
+
+  if (has_v4) {
+    sockaddr_in dst{};
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(443);
+    ::inet_pton(AF_INET, "1.1.1.1", &dst.sin_addr);
+    v4_src.sin_port = 0;
+    if (try_connect(AF_INET, reinterpret_cast<const sockaddr *>(&v4_src), sizeof(v4_src),
+                    reinterpret_cast<const sockaddr *>(&dst), sizeof(dst))) {
+      return true;
+    }
+  }
+  if (has_v6) {
+    sockaddr_in6 dst6{};
+    dst6.sin6_family = AF_INET6;
+    dst6.sin6_port = htons(443);
+    ::inet_pton(AF_INET6, "2606:4700:4700::1111", &dst6.sin6_addr);
+    v6_src.sin6_port = 0;
+    if (try_connect(AF_INET6, reinterpret_cast<const sockaddr *>(&v6_src), sizeof(v6_src),
+                    reinterpret_cast<const sockaddr *>(&dst6), sizeof(dst6))) {
+      return true;
+    }
+  }
+  return false;
+#endif
 }
 
 } // namespace openxmb::xmb

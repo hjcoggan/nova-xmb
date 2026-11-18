@@ -50,6 +50,7 @@ struct app_info {
     std::string runtime;
     std::string categories;
     std::filesystem::path desktop_file;
+    std::filesystem::file_time_type added_at{};
     bool terminal = false;
     bool hidden = false;
     bool no_display = false;
@@ -83,6 +84,10 @@ inline constexpr std::array<library_column, 5> library_columns{{
 
 // Game manifests plus the desktop entries that make sense on a console.
 std::vector<app_info> scan_library();
+// Game manifests currently hidden by the player via excludedApplications.
+std::vector<app_info> scan_hidden_games();
+// Launches a library game/app directly (used by Hidden Games as well as XMB).
+bool launch_library_item(const app_info& app, app::shell* xmb);
 // The column an item is shown in: the player's choice, else its default.
 std::string library_column_of(const app_info& app);
 

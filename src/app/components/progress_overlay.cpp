@@ -187,8 +187,8 @@ namespace app {
             const float pct = static_cast<float>(std::clamp(progress, 0.0, 1.0));
             const float fill_w = track_w * pct;
 
-            const glm::vec4 accent{glass::srgb_to_linear(glass::accent_srgb[0]), glass::srgb_to_linear(glass::accent_srgb[1]),
-                                   glass::srgb_to_linear(glass::accent_srgb[2]), 1.0f};
+            const auto accent_rgb = glass::active_accent_linear();
+            const glm::vec4 accent{accent_rgb[0], accent_rgb[1], accent_rgb[2], 1.0f};
             c.rect(track_x, track_y, track_w, track_h, {1.0f, 1.0f, 1.0f, 0.25f}, track_h * 0.5f);
             if(fill_w > 1.0f) {
                 c.rect(track_x, track_y, fill_w, track_h, accent, std::min(track_h, fill_w) * 0.5f);

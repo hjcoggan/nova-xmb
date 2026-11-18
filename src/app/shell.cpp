@@ -17,10 +17,12 @@
  */
 
 module;
+#include "openxmb/xmb/glass.hpp"
 #include "openxmb/xmb/pause_backdrop.hpp"
 #include "openxmb/xmb/ui_tokens.hpp"
 #include "openxmb/xmb/child_process.hpp"
 #include "openxmb/xmb/ipc_message.hpp"
+#include "components/display_refresh.hpp"
 #include <future>
 
 #include <array>
@@ -285,6 +287,9 @@ namespace app
         }
         launch_menu_had_focus = false;
         launch_started = std::chrono::steady_clock::now();
+        app::display_refresh::apply_in_game_refresh_rate(
+            config::CONFIG.preference("display.refresh.rate", "120 Hz"));
+        in_game_refresh_active = true;
         emplace_overlay<app::launch_overlay>(title, artwork, *loader);
     }
 
@@ -463,6 +468,7 @@ namespace app
     {
         phase::preload();
         desktop_settings::restore_saved_brightness();
+        app::display_refresh::apply_launcher_refresh_rate();
 
         font_render = std::make_unique<font_renderer>(openxmb::localization::select_font(config::CONFIG.fontPath,config::CONFIG.asset_directory,config::CONFIG.language).string(), 32, device, allocator, win->swapchainExtent, win->gpuFeatures);
         image_render = std::make_unique<image_renderer>(device, win->swapchainExtent, win->gpuFeatures);
@@ -707,6 +713,47 @@ namespace app
         loader->loadTexture(cursorTexture.get(), existing_asset_or_fallback(
             config::CONFIG.asset_directory/"icons/icon_cursor.png",
             config::CONFIG.asset_directory/"icons/icon_category_settings.png"));
+
+        constexpr std::array<const char*, 15> status_icon_files{{
+            "icon_status_battery_exclamation.png",
+            "icon_status_battery_1.png",
+            "icon_status_battery_2.png",
+            "icon_status_battery_3.png",
+            "icon_status_battery_4.png",
+            "icon_status_battery_charging.png",
+            "icon_status_battery_charging_2.png",
+            "icon_status_wifi.png",
+            "icon_status_wifi_2.png",
+            "icon_status_wifi_1.png",
+            "icon_status_wifi_0.png",
+            "icon_status_wifi_off.png",
+            "icon_status_plane_tilt.png",
+            "icon_status_bluetooth.png",
+            "icon_status_bluetooth_connected.png",
+        }};
+        for(std::size_t i = 0; i < status_icon_files.size(); ++i) {
+            const auto path = config::CONFIG.asset_directory / "icons" / status_icon_files[i];
+            if(!std::filesystem::is_regular_file(path)) continue;
+            statusIconTextures[i] = std::make_unique<texture>(device, allocator);
+            loader->loadTexture(statusIconTextures[i].get(), path);
+        }
+        status_bar_render.set_icons({
+            .battery_exclamation = statusIconTextures[0].get(),
+            .battery_1 = statusIconTextures[1].get(),
+            .battery_2 = statusIconTextures[2].get(),
+            .battery_3 = statusIconTextures[3].get(),
+            .battery_4 = statusIconTextures[4].get(),
+            .battery_charging = statusIconTextures[5].get(),
+            .battery_charging_2 = statusIconTextures[6].get(),
+            .wifi = statusIconTextures[7].get(),
+            .wifi_2 = statusIconTextures[8].get(),
+            .wifi_1 = statusIconTextures[9].get(),
+            .wifi_0 = statusIconTextures[10].get(),
+            .wifi_off = statusIconTextures[11].get(),
+            .aeroplane = statusIconTextures[12].get(),
+            .bluetooth = statusIconTextures[13].get(),
+            .bluetooth_connected = statusIconTextures[14].get(),
+        });
 
         // Push startup splash overlay (plays jingle, fades text). Headless
         // runs keep their settled-scene default unless visual verification
@@ -1792,6 +1839,14 @@ namespace app
     }
 
     void shell::render_gui(gui_renderer& renderer) {
+        {
+            const auto wall_now = openxmb::xmb::wall_clock_now();
+            const auto theme_colour = utils::xmb_resolve_theme_colour(wall_now);
+            const auto icon_colour = utils::xmb_icon_colour(wall_now);
+            openxmb::xmb::glass::set_theme_colors(
+                {theme_colour.base_colour.r, theme_colour.base_colour.g, theme_colour.base_colour.b},
+                {icon_colour.r, icon_colour.g, icon_colour.b});
+        }
         renderer.text_color = glm::vec4(config::CONFIG.textColor, 1.0F);
         renderer.text_scale = static_cast<float>(config::CONFIG.textScale);
         // Applying persisted settings here also covers a profile with no active
@@ -2236,6 +2291,10 @@ namespace app
         }
         if(!menu::has_active_child()) {
             game_has_screen=false;
+            if(in_game_refresh_active) {
+                app::display_refresh::apply_launcher_refresh_rate();
+                in_game_refresh_active=false;
+            }
         } else if(game_has_screen&&has_input_focus&&!has_pause_overlay()&&!is_retiring_pause_overlay(old_overlay)) {
             // The menu has the focus again but nobody asked for a pause: the
             // game's window is gone and its process is still finishing (an
@@ -2246,7 +2305,8 @@ namespace app
         } else {
             game_focus_returned={};
         }
-        const auto cap=config::CONFIG.maxFPS>10000?0:config::CONFIG.maxFPS;
+        const double configured_cap=(config::CONFIG.maxFPS<=0.0||config::CONFIG.maxFPS>10000.0)?60.0:config::CONFIG.maxFPS;
+        const auto cap=std::min(configured_cap,60.0);
         // While a game has the screen the menu only clears a transparent
         // frame, so it can afford to look at the pause socket often: Home then
         // answers within a frame or two instead of up to a second.

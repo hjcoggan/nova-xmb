@@ -40,7 +40,11 @@ void draw_glass_px(Renderer& renderer, float x, float y, float w, float h, varia
   p.tint = m.tint;
   p.dim_strength = m.dim_strength;
   p.samples_backdrop = m.samples_backdrop;
-  const auto rim = rim_for(v);
+  if constexpr (requires { p.tint_rgba; }) {
+    const auto tint_rgba = active_theme_tint_linear();
+    p.tint_rgba = {tint_rgba[0], tint_rgba[1], tint_rgba[2], tint_rgba[3]};
+  }
+  const auto rim = draw_rim_for(v);
   renderer.draw_glass_panel({x / fw, y / fh}, {w / fw, h / fh}, {rim[0], rim[1], rim[2], rim[3]}, p);
 }
 

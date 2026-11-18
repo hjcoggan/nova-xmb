@@ -1,4 +1,7 @@
 module;
+#include "desktop_settings_posix.hpp"
+#include "display_refresh.hpp"
+#include "openxmb/xmb/status_bar.hpp"
 #include "../../localization/ui_literal_text.hpp"
 #include "openxmb/xmb/catalog.hpp"
 #include "openxmb/xmb/iwctl_status.hpp"
@@ -53,6 +56,7 @@ import auroreengine;
 import vulkan_hpp;
 import openxmb.config;
 import :component;
+import :applications_menu;
 import :main;
 import :choice_overlay;
 import :message_overlay;
@@ -114,7 +118,7 @@ inline int nova_exec_capture(const std::vector<std::string>& args,std::string& s
     const pid_t pid=::fork();
     if(pid==0) {
         ::close(pipefd[0]);
-        const int devnull=::open("/dev/null",O_RDWR);
+        const int devnull=detail::open_devnull_rdwr();
         if(devnull<0 || nova_dup_to(devnull,STDIN_FILENO)<0 || nova_dup_to(devnull,STDERR_FILENO)<0) ::_exit(126);
         if(devnull>STDERR_FILENO) ::close(devnull);
         if(nova_dup_to(pipefd[1],STDOUT_FILENO)<0) ::_exit(126);
@@ -466,6 +470,8 @@ export std::string value(const std::string& key,shell* /*host*/=nullptr) {
     if(key=="time.offset") return "0";
     if(key=="time.format") return "24-hour";
     if(key=="date.format") return "DD/MM/YYYY";
+    if(key=="games.sort") return "Alphabetically";
+    if(key=="display.refresh.rate") return "120 Hz";
     if(key=="power.dim"||key=="power.reduced.motion") return "Off";
     if(key=="audio.startup") return "On";
     return {};
@@ -497,7 +503,7 @@ class nova_update_item final : public progress_item {
             const pid_t pid=::fork();
             if(pid==0) {
                 ::close(pipefd[0]);
-                const int devnull=::open("/dev/null",O_RDWR);
+                const int devnull=detail::open_devnull_rdwr();
                 if(devnull<0 || nova_dup_to(devnull,STDIN_FILENO)<0) ::_exit(126);
                 if(devnull>STDERR_FILENO) ::close(devnull);
                 if(nova_dup_to(pipefd[1],STDOUT_FILENO)<0 || nova_dup_to(pipefd[1],STDERR_FILENO)<0) ::_exit(126);
@@ -690,6 +696,61 @@ class nova_async_task_item final : public progress_item {
         std::thread worker;
         bool completed=false;
 };
+void open_status_bar_reorder(shell* host, unsigned int initial_selection = 0) {
+    const auto current = openxmb::xmb::parse_status_bar_order(
+        config::CONFIG.preference("status.bar.order"));
+    std::vector<std::string> labels;
+    labels.reserve(current.size() + 1);
+    for(std::size_t idx = 0; idx < current.size(); ++idx) {
+        labels.push_back(std::to_string(idx + 1) + ". " +
+            std::string(openxmb::xmb::status_bar_element_label(current[idx])));
+    }
+    labels.push_back("Reset to Default"_());
+    auto* overlay = host->emplace_overlay<choice_overlay>(
+        labels, std::min<unsigned int>(initial_selection, static_cast<unsigned int>(labels.size() - 1)),
+        [host, current](unsigned int choice_idx) {
+            if(choice_idx >= current.size()) {
+                config::CONFIG.preferences["status.bar.order"] =
+                    openxmb::xmb::format_status_bar_order(openxmb::xmb::kDefaultStatusBarOrder);
+                config::CONFIG.save_config();
+                open_status_bar_reorder(host, 0);
+                return;
+            }
+            std::vector<std::string> actions;
+            std::vector<int> deltas;
+            if(choice_idx > 0) {
+                actions.push_back("Move Left"_());
+                deltas.push_back(-1);
+            }
+            if(choice_idx + 1 < current.size()) {
+                actions.push_back("Move Right"_());
+                deltas.push_back(1);
+            }
+            actions.push_back("Back"_());
+            deltas.push_back(0);
+            auto* sub = host->emplace_overlay<choice_overlay>(
+                actions, 0,
+                [host, current, choice_idx, deltas](unsigned int act_idx) {
+                    const int delta = deltas.at(act_idx);
+                    if(delta == 0) {
+                        open_status_bar_reorder(host, choice_idx);
+                        return;
+                    }
+                    auto updated = current;
+                    const std::size_t next_idx = static_cast<std::size_t>(
+                        static_cast<int>(choice_idx) + delta);
+                    std::swap(updated[choice_idx], updated[next_idx]);
+                    config::CONFIG.preferences["status.bar.order"] =
+                        openxmb::xmb::format_status_bar_order(updated);
+                    config::CONFIG.save_config();
+                    open_status_bar_reorder(host, static_cast<unsigned int>(next_idx));
+                });
+            sub->set_top_action(std::string(
+                openxmb::xmb::status_bar_element_label(current[choice_idx])));
+        });
+    overlay->set_top_action("Rearrange Status Bar"_());
+}
+
 void apply(shell* shell,const std::string& key,const std::string& selected) {
     nova_probe_cache.invalidate();
     auto& c=config::CONFIG;
@@ -715,6 +776,16 @@ void apply(shell* shell,const std::string& key,const std::string& selected) {
         else {auto* image=IMG_Load(selected.c_str());if(!image){show_error(shell,"This file is not a supported image or video.");return;}SDL_FreeSurface(image);}
         c.setBackgroundImage(selected);c.setBackgroundType(video?config::config::background_type::video:config::config::background_type::image);}
     else if(key=="debug.fps") c.setShowFPS(selected=="On");
+    else if(key=="games.sort") {
+        c.libraryOrder.erase("switch");
+        c.libraryOrder.erase("windows");
+        c.libraryOrder.erase("linux");
+        c.libraryOrder.erase("android");
+        c.preferences[key]=selected;
+        c.save_config();
+        shell->reload_menu();
+        return;
+    }
     c.preferences[key]=selected;c.save_config();
 }
 export void activate(shell* shell,const openxmb::xmb::CatalogNode& node) {
@@ -838,6 +909,51 @@ export void activate(shell* shell,const openxmb::xmb::CatalogNode& node) {
         return;
     }
     if(key=="games.rescan") {openxmb::desktop::Library library;const auto count=library.scan_games();show_error(shell,"Added "+std::to_string(count)+" games to the library.");return;}
+    if(key=="games.hidden") {
+        const auto hidden=menu::scan_hidden_games();
+        if(hidden.empty()) {
+            shell->emplace_overlay<message_overlay>("Hidden Games"_(),"No hidden games."_());
+            return;
+        }
+        std::vector<std::string> labels;
+        labels.reserve(hidden.size());
+        for(const auto& game:hidden) labels.push_back(game.name);
+        auto* list=shell->emplace_overlay<choice_overlay>(labels,0,[shell,hidden](unsigned int i){
+            if(i>=hidden.size()) return;
+            const auto game=hidden[i];
+            auto* confirm=shell->emplace_overlay<choice_overlay>(
+                std::vector<std::string>{"Play Game"_(),"Restore to Library"_(),"Cancel"_()},0,
+                [shell,game](unsigned int action_idx){
+                    if(action_idx==0) {
+                        menu::launch_library_item(game,shell);
+                    } else if(action_idx==1) {
+                        config::CONFIG.excludeApplication(game.id,false);
+                        config::CONFIG.save_config();
+                        shell->reload_menu();
+                    }
+                });
+            confirm->set_top_action(game.name);
+        });
+        list->set_top_action("Hidden Games"_());
+        return;
+    }
+    if(key=="display.status.bar.order") {
+        open_status_bar_reorder(shell, 0);
+        return;
+    }
+    if(key=="display.refresh.rate") {
+        const auto caps=display_refresh::query_display_capabilities();
+        const auto choices=display_refresh::available_refresh_rate_choices(caps);
+        const auto current=value(key,shell);
+        auto it=std::find(choices.begin(),choices.end(),current);
+        unsigned selected=(it==choices.end())?static_cast<unsigned>(choices.size()-1)
+            :static_cast<unsigned>(it-choices.begin());
+        auto* overlay=shell->emplace_overlay<choice_overlay>(choices,selected,[shell,key,choices](unsigned i){
+            if(i<choices.size()) apply(shell,key,choices[i]);
+        });
+        overlay->set_top_action("In-Game Refresh Rate"_());
+        return;
+    }
     if(key=="audio.device") {
         const auto sinks=nova_pipewire_sinks();
         if(!sinks.empty()) {

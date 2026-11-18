@@ -25,6 +25,7 @@ module;
 
 #include <openxmb/xmb/icon_resolver.hpp>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdlib>
@@ -165,7 +166,10 @@ inline std::atomic<int> active_launched_children{0};
     return {};
 }
 
-inline bool launch_detached(const std::vector<std::string>& args)
+inline bool launch_detached(
+    const std::vector<std::string>& args,
+    const std::vector<std::pair<std::string, std::string>>& extra_env = {}
+)
 {
     if(args.empty() || args.front().empty()) {
         return false;
@@ -184,16 +188,43 @@ inline bool launch_detached(const std::vector<std::string>& args)
     argv.push_back(nullptr);
 
 #if defined(_WIN32)
+    (void)extra_env;
     auto pid = _spawnvp(_P_NOWAIT, args.front().c_str(), argv.data());
     return pid != -1;
 #else
+    std::vector<std::string> env_storage;
+    std::vector<char*> env_ptrs;
+    char** spawn_env = environ;
+    if(!extra_env.empty()) {
+        for(char** cur = environ; cur != nullptr && *cur != nullptr; ++cur) {
+            std::string_view entry(*cur);
+            const auto eq = entry.find('=');
+            const auto key = eq == std::string_view::npos ? entry : entry.substr(0, eq);
+            const bool overridden = std::ranges::any_of(extra_env, [&](const auto& pair) {
+                return pair.first == key;
+            });
+            if(!overridden) {
+                env_storage.emplace_back(*cur);
+            }
+        }
+        for(const auto& [k, v] : extra_env) {
+            env_storage.push_back(k + "=" + v);
+        }
+        env_ptrs.reserve(env_storage.size() + 1);
+        for(auto& item : env_storage) {
+            env_ptrs.push_back(item.data());
+        }
+        env_ptrs.push_back(nullptr);
+        spawn_env = env_ptrs.data();
+    }
+
     pid_t pid{};
     posix_spawnattr_t attr{};
     posix_spawnattr_init(&attr);
     posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
     posix_spawnattr_setpgroup(&attr, 0);
     active_launched_children.fetch_add(1, std::memory_order_relaxed);
-    int rc = posix_spawnp(&pid, args.front().c_str(), nullptr, &attr, argv.data(), environ);
+    int rc = posix_spawnp(&pid, args.front().c_str(), nullptr, &attr, argv.data(), spawn_env);
     posix_spawnattr_destroy(&attr);
     if(rc != 0) {
         active_launched_children.fetch_sub(1, std::memory_order_relaxed);

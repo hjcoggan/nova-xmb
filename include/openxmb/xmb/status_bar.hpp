@@ -1,10 +1,13 @@
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <ctime>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 
 namespace openxmb::xmb {
 
@@ -54,21 +57,42 @@ struct StatusBarTime {
 // top-right glass frame. The renderer refreshes it from Linux sysfs on a slow
 // timer; every field keeps an "unknown" value so other platforms, captures and
 // unit tests still render the clock alone.
+enum class StatusBarElement { battery, wifi, bluetooth, clock };
+
+inline constexpr std::array<StatusBarElement, 4> kDefaultStatusBarOrder{
+    StatusBarElement::battery,
+    StatusBarElement::wifi,
+    StatusBarElement::bluetooth,
+    StatusBarElement::clock,
+};
+
 struct StatusBarStatus {
   // Charge level 0..100, or -1 when no battery supply is readable.
   int battery_percent = -1;
   // The supply reports Charging, Full or a fast variant.
   bool charging = false;
   // -1: no wireless interface, indicator hidden. 0: interface present but
-  // down or unassociated, bars drawn dim. 1..100: link quality in percent.
+  // down or unassociated, dim icon. 1..100: link quality in percent.
   int wifi_signal = -1;
-  // Radio state from rfkill. Aeroplane means both radios are blocked; in that
-  // state the plane glyph replaces the Wi-Fi and Bluetooth glyphs.
+  // Associated with a Wi-Fi network, but no internet reachability.
+  bool wifi_no_internet = false;
+  // Radio state from rfkill and Bluetooth sysfs. Aeroplane means both radios
+  // are blocked; in that state the plane glyph replaces Wi-Fi and Bluetooth.
   bool bluetooth_on = false;
+  bool bluetooth_connected = false;
   bool aeroplane_on = false;
   // The analog face is opt-in; most people just want the digital time.
   bool analog_clock = false;
+  // Left-to-right display order for status bar items.
+  std::array<StatusBarElement, 4> element_order = kDefaultStatusBarOrder;
 };
+
+[[nodiscard]] std::array<StatusBarElement, 4>
+parse_status_bar_order(std::string_view spec) noexcept;
+[[nodiscard]] std::string
+format_status_bar_order(const std::array<StatusBarElement, 4> &order);
+[[nodiscard]] std::string_view
+status_bar_element_label(StatusBarElement element) noexcept;
 
 struct ClockHandAngles {
   float hour_radians{};
@@ -102,5 +126,7 @@ resolve_local_status_bar_time(
 
 [[nodiscard]] ClockHandAngles
 resolve_clock_hand_angles(const StatusBarTime &time) noexcept;
+
+[[nodiscard]] bool probe_wifi_internet(std::string_view iface);
 
 } // namespace openxmb::xmb

@@ -261,7 +261,7 @@ int main(int argc, char *argv[]) try {
     window_config.title = "OpenXMB";
     window_config.preferredPresentMode = config::CONFIG.preferredPresentMode;
     window_config.sampleCount = config::CONFIG.sampleCount;
-    window_config.fpsLimit = config::CONFIG.maxFPS;
+    window_config.fpsLimit = std::min(config::CONFIG.maxFPS > 0.0 ? config::CONFIG.maxFPS : 60.0, 60.0);
     window_config.width = program.get<int>("--width");
     window_config.height = program.get<int>("--height");
     window_config.fullscreen = !program.get<bool>("--no-fullscreen");

@@ -33,6 +33,11 @@ struct SettingsSceneIcon {
 struct SettingsSceneRenderOptions {
   bool glass_icons{};
   bool suppress_value_labels{};
+  double x_shift{0.0};
+  double alpha_multiplier{1.0};
+  glass::focus_tracker *focus_lens{};
+  double now_ms{0.0};
+  bool is_current_column{true};
 };
 
 class SettingsSceneRenderer {
@@ -161,14 +166,22 @@ void draw_icon(auroreengine::gui_renderer &renderer,
 // (app::xmb_canvas::glass with variant::clear), in this renderer's layout space.
 void draw_focus_lens(auroreengine::gui_renderer &renderer,
                      const ContainedLayout &layout, const SettingsRowVisual &row,
-                     double right_x) {
+                     double right_x, const SettingsSceneRenderOptions &options) {
   namespace glass = openxmb::xmb::glass;
   const auto alpha = static_cast<float>(row.alpha);
   if (alpha <= 0.001F) return;
-  const double left = SelectionLens::left(row.icon_center_x, row.icon_extent, false);
+  double left = SelectionLens::left(row.icon_center_x, row.icon_extent, false);
   const double height = SelectionLens::height(row.icon_extent);
   const double top = row.center_y - height * 0.5;
-  const double width = right_x - left;
+  double width = right_x - left;
+  if (options.is_current_column && options.focus_lens != nullptr) {
+    const float now_ms = static_cast<float>(options.now_ms);
+    options.focus_lens->move_to(
+        {static_cast<float>(left), 0.0F, static_cast<float>(width), 0.0F}, now_ms);
+    const auto at = options.focus_lens->at(now_ms);
+    left = at.x;
+    width = at.w;
+  }
   if (width <= 0 || height <= 0) return;
   glass::draw_glass_px<auroreengine::glass_panel_params, auroreengine::simple_params>(
       renderer, layout.offset_x + static_cast<float>(left) * layout.scale,
@@ -189,7 +202,8 @@ void draw_focused_label(auroreengine::gui_renderer &renderer,
 
 void draw_wrapped_description(auroreengine::gui_renderer &renderer,
                               const ContainedLayout &layout,
-                              const SettingsRowVisual &row) {
+                              const SettingsRowVisual &row,
+                              double x_shift) {
   if (!row.has_description || row.description_alpha <= 0.001 ||
       row.description_max_width <= 0.0)
     return;
@@ -202,7 +216,7 @@ void draw_wrapped_description(auroreengine::gui_renderer &renderer,
   const auto room = static_cast<float>(std::min<double>(
       row.description_max_width * layout.scale,
       std::max(120.0, static_cast<double>(layout.framebuffer_width) -
-                          (layout.offset_x + row.description_x * layout.scale) -
+                          (layout.offset_x + (row.description_x - x_shift) * layout.scale) -
                           ui::px(ui::space::lg) * layout.scale)));
   std::string text(row.description);
   const std::string ellipsis = "...";
@@ -243,6 +257,13 @@ void SettingsSceneRenderer::render(auroreengine::gui_renderer &renderer,
       : 0.0;
   for (std::size_t index = 0; index < snapshot.row_count; ++index) {
     auto row = snapshot.rows[index];
+    row.icon_center_x += options.x_shift;
+    row.label_x += options.x_shift;
+    row.description_x += options.x_shift;
+    row.value_right_x += options.x_shift;
+    row.alpha *= options.alpha_multiplier;
+    row.value_alpha *= options.alpha_multiplier;
+    row.description_alpha *= options.alpha_multiplier;
     if (row.alpha <= 0.001)
       continue;
     row.center_y += focus_y_shift;
@@ -288,16 +309,16 @@ void SettingsSceneRenderer::render(auroreengine::gui_renderer &renderer,
       }
       if (!options.suppress_value_labels && row.has_value) {
         right = std::max(right, std::min(row.value_right_x,
-            (layout.framebuffer_width - layout.offset_x) / layout.scale - 48.0) + 24.0);
+            (layout.framebuffer_width - layout.offset_x) / layout.scale - 48.0 + options.x_shift) + 24.0);
       }
-      draw_focus_lens(renderer, layout, row, right);
+      draw_focus_lens(renderer, layout, row, right, options);
     }
     if (const auto *icon = find_icon(icons, row.icon_ref))
       draw_icon(renderer, layout, row, *icon, options.glass_icons);
 
     if (row.focused) {
       draw_focused_label(renderer, layout, row);
-      draw_wrapped_description(renderer, layout, row);
+      draw_wrapped_description(renderer, layout, row, options.x_shift);
     } else {
       const auto value = 235.0F / 255.0F;
       renderer.draw_text_pixels(row.label,layout.offset_x+row.label_x*layout.scale,
@@ -315,7 +336,7 @@ void SettingsSceneRenderer::render(auroreengine::gui_renderer &renderer,
           renderer.text_width_pixels(row.label,label_size) + 36.0F*layout.scale;
       const auto right_edge = std::min(
           static_cast<double>(layout.offset_x + row.value_right_x * layout.scale),
-          static_cast<double>(layout.framebuffer_width) - 48.0 * layout.scale);
+          static_cast<double>(layout.framebuffer_width) + (options.x_shift - 48.0) * layout.scale);
       const auto room = static_cast<float>(right_edge - label_end);
       std::string value(row.value);
       if (room <= 0.0F) {
@@ -336,7 +357,7 @@ void SettingsSceneRenderer::render(auroreengine::gui_renderer &renderer,
               : glm::vec3(235.0F / 255.0F);
       const auto right_x = std::min(
           static_cast<double>(layout.offset_x + row.value_right_x * layout.scale),
-          static_cast<double>(layout.framebuffer_width) - 48.0 * layout.scale);
+          static_cast<double>(layout.framebuffer_width) + (options.x_shift - 48.0) * layout.scale);
       renderer.draw_text_pixels(value,
           right_x - measured,
           layout.offset_y+(row.center_y+(row.focused?3.0:11.0))*layout.scale,size,

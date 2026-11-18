@@ -3,16 +3,19 @@ module;
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <optional>
 #include <span>
-#include <string_view>
 #include <string>
-#include <ctime>
+#include <string_view>
+#include <thread>
 
 #include "openxmb/xmb/status_bar.hpp"
 
@@ -24,8 +27,28 @@ import openxmb.config;
 
 export namespace openxmb::xmb {
 
+struct StatusBarIcons {
+  const auroreengine::texture *battery_exclamation{};
+  const auroreengine::texture *battery_1{};
+  const auroreengine::texture *battery_2{};
+  const auroreengine::texture *battery_3{};
+  const auroreengine::texture *battery_4{};
+  const auroreengine::texture *battery_charging{};
+  const auroreengine::texture *battery_charging_2{};
+  const auroreengine::texture *wifi{};
+  const auroreengine::texture *wifi_2{};
+  const auroreengine::texture *wifi_1{};
+  const auroreengine::texture *wifi_0{};
+  const auroreengine::texture *wifi_off{};
+  const auroreengine::texture *aeroplane{};
+  const auroreengine::texture *bluetooth{};
+  const auroreengine::texture *bluetooth_connected{};
+};
+
 class StatusBarRenderer {
 public:
+  void set_icons(StatusBarIcons icons) noexcept { icons_ = icons; }
+
   void render(auroreengine::gui_renderer &renderer, const StatusBarTime &time,
               float opacity = 1.0F, std::string_view label = {},
               const StatusBarStatus &status = {}) const;
@@ -36,6 +59,9 @@ public:
   render_local(auroreengine::gui_renderer &renderer,
                std::chrono::system_clock::time_point time,
                float opacity = 1.0F) const;
+
+private:
+  StatusBarIcons icons_{};
 };
 
 } // namespace openxmb::xmb
@@ -235,13 +261,12 @@ read_sysfs_text(const std::filesystem::path &path) {
 }
 
 // The first wireless interface in sysfs decides the indicator: an "up" link
-// means associated, a down link keeps the bars visible but dim, and no
-// wireless interface at all hides them.
-[[nodiscard]] int read_wifi_signal() {
+// means associated, a down link keeps the icon dim, and no wireless
+// interface at all hides it.
+[[nodiscard]] std::string active_wifi_interface(bool &wireless_present) {
   std::error_code error;
   const std::filesystem::path net_root{"/sys/class/net"};
-  std::string connected;
-  bool wireless_present = false;
+  wireless_present = false;
   for (std::filesystem::directory_iterator entry{net_root, error}, end;
        entry != end; entry.increment(error)) {
     if (error) {
@@ -253,20 +278,100 @@ read_sysfs_text(const std::filesystem::path &path) {
     }
     wireless_present = true;
     if (read_sysfs_text(entry->path() / "operstate") == "up") {
-      connected = name;
-      break;
+      return name;
     }
   }
+  return {};
+}
+
+[[nodiscard]] int read_wifi_signal(std::string &connected_iface) {
+  bool wireless_present = false;
+  connected_iface = active_wifi_interface(wireless_present);
   if (!wireless_present) {
     return -1;
   }
-  if (connected.empty()) {
+  if (connected_iface.empty()) {
     return 0;
   }
-  const auto level = wireless_level_dbm(connected);
+  const auto level = wireless_level_dbm(connected_iface);
   // A cfg80211 driver that exports no legacy level is still associated, so
-  // show three bars rather than a false weak link.
+  // show full strength rather than a false weak link.
   return level.has_value() ? wireless_signal_from_dbm(*level) : 100;
+}
+
+[[nodiscard]] bool has_default_route_for(std::string_view iface) {
+  if (iface.empty()) {
+    return false;
+  }
+  {
+    std::ifstream route("/proc/net/route");
+    std::string line;
+    std::getline(route, line);
+    while (std::getline(route, line)) {
+      const auto tab1 = line.find('\t');
+      if (tab1 == std::string::npos) continue;
+      if (std::string_view{line}.substr(0, tab1) != iface) continue;
+      const auto tab2 = line.find('\t', tab1 + 1);
+      if (tab2 == std::string::npos) continue;
+      if (std::string_view{line}.substr(tab1 + 1, tab2 - tab1 - 1) == "00000000") {
+        return true;
+      }
+    }
+  }
+  {
+    std::ifstream route6("/proc/net/ipv6_route");
+    std::string line;
+    while (std::getline(route6, line)) {
+      // Columns: dest dst_len src src_len next_hop metric ref use flags iface
+      if (line.size() < iface.size() || !line.ends_with(iface)) continue;
+      if (line.starts_with("00000000000000000000000000000000 00 ")) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+[[nodiscard]] bool check_wifi_no_internet(const std::string &iface) {
+  if (iface.empty() || !has_default_route_for(iface)) {
+    return true;
+  }
+  static std::atomic<bool> internet_ok{true};
+  static std::atomic<bool> probe_running{false};
+  static std::optional<std::chrono::steady_clock::time_point> last_probe;
+  static std::string last_iface;
+  const auto now = std::chrono::steady_clock::now();
+  const bool iface_changed = last_iface != iface;
+  const bool due = iface_changed || !last_probe.has_value() ||
+                   (now - *last_probe >= std::chrono::seconds(15));
+  if (due && !probe_running.exchange(true)) {
+    last_iface = iface;
+    last_probe = now;
+    std::thread([iface]() {
+      internet_ok.store(probe_wifi_internet(iface), std::memory_order_relaxed);
+      probe_running.store(false, std::memory_order_relaxed);
+    }).detach();
+  }
+  return !internet_ok.load(std::memory_order_relaxed);
+}
+
+[[nodiscard]] bool any_external_power_online() {
+  std::error_code error;
+  const std::filesystem::path root{"/sys/class/power_supply"};
+  for (std::filesystem::directory_iterator entry{root, error}, end;
+       entry != end; entry.increment(error)) {
+    if (error) {
+      break;
+    }
+    const auto type = read_sysfs_text(entry->path() / "type");
+    if (type == "Battery") {
+      continue;
+    }
+    if (read_sysfs_text(entry->path() / "online") == "1") {
+      return true;
+    }
+  }
+  return false;
 }
 
 // rfkill exposes each radio as /sys/class/rfkill/rfkillN/type and /state,
@@ -287,6 +392,24 @@ read_sysfs_text(const std::filesystem::path &path) {
   return false;
 }
 
+// Active link-layer Bluetooth connections appear as hciN:handle under
+// /sys/class/bluetooth; scanning alone does not create them.
+[[nodiscard]] bool read_bluetooth_connected() {
+  std::error_code error;
+  const std::filesystem::path root{"/sys/class/bluetooth"};
+  for (std::filesystem::directory_iterator entry{root, error}, end;
+       entry != end; entry.increment(error)) {
+    if (error) {
+      break;
+    }
+    const auto name = entry->path().filename().string();
+    if (name.find(':') != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
 [[nodiscard]] StatusBarStatus read_status_bar_status() {
   StatusBarStatus status{};
   const auto supply = battery_supply_path();
@@ -294,11 +417,18 @@ read_sysfs_text(const std::filesystem::path &path) {
     status.battery_percent =
         parse_status_percent(read_sysfs_text(supply / "capacity"));
     const auto state = read_sysfs_text(supply / "status");
-    status.charging = state == "Full" || state.starts_with("Charg");
+    const bool plugged = state == "Full" || state.starts_with("Charg") ||
+                         any_external_power_online();
+    status.charging = state == "Full" || state.starts_with("Charg") ||
+                      (plugged && status.battery_percent >= 100);
   }
-  status.wifi_signal = read_wifi_signal();
+  std::string wifi_iface;
+  status.wifi_signal = read_wifi_signal(wifi_iface);
+  status.wifi_no_internet =
+      status.wifi_signal > 0 && check_wifi_no_internet(wifi_iface);
   const bool wifi_on = radio_unblocked("wlan");
   status.bluetooth_on = radio_unblocked("bluetooth");
+  status.bluetooth_connected = status.bluetooth_on && read_bluetooth_connected();
   status.aeroplane_on = !wifi_on && !status.bluetooth_on;
   return status;
 }
@@ -429,7 +559,7 @@ constexpr float wifi_indicator_width =
 constexpr std::size_t kWifiDotSegments = 16;
 constexpr std::size_t kWifiArcSegments = 16;
 constexpr std::size_t kWifiCapSegments = 6;
-constexpr float indicator_gap = 12.0F;
+constexpr float indicator_gap = 20.0F;
 
 [[nodiscard]] auroreengine::simple_renderer::vertex_data
 make_logical_vertex(const ContainedLayout &layout, float x, float y,
@@ -531,79 +661,116 @@ void draw_wifi_arc(auroreengine::gui_renderer &renderer,
   renderer.draw_generic(std::span{vertices});
 }
 
-// Outline, nub and proportional fill. Charging lightens the fill towards green
-// so the state reads without a second glyph.
+constexpr float status_icon_target_h = 22.0F;
+constexpr float battery_slot_width = 28.5F;
+constexpr float wifi_slot_width = 29.5F;
+constexpr float plane_indicator_width = 22.0F;
+constexpr float bluetooth_indicator_width = 15.0F;
+constexpr float bluetooth_connected_indicator_width = 21.0F;
+
+void draw_status_icon(auroreengine::gui_renderer &renderer,
+                      const ContainedLayout &layout,
+                      const auroreengine::texture &tex, float center_x,
+                      float center_y, float draw_size, glm::vec4 tint) {
+  const auto left = center_x - draw_size * 0.5F;
+  const auto top = center_y - draw_size * 0.5F;
+  const auto extent = draw_size * layout.scale / layout.framebuffer_height;
+  renderer.draw_image(tex, layout.x(left), layout.y(top), extent, extent, tint);
+}
+
 void draw_battery_indicator(auroreengine::gui_renderer &renderer,
-                            const ContainedLayout &layout, float left_x,
+                            const ContainedLayout &layout,
+                            const StatusBarIcons &icons, float left_x,
                             float center_y, int percent, bool charging,
                             float opacity) {
-  // The same hairline weight as the clock and the radio glyphs.
+  const auroreengine::texture *tex = nullptr;
+  glm::vec4 tint{1.0F, 1.0F, 1.0F, 0.94F * opacity};
+  float draw_size = status_icon_target_h * (128.0F / 64.0F) * 0.86F;
+  float y_offset = 0.0F;
+  if (charging) {
+    if (percent >= 100) {
+      tex = icons.battery_charging_2;
+      draw_size = status_icon_target_h * (128.0F / 91.0F);
+      // Center the plug+battery glyph vertically (PNG visual center at y=77/128).
+      y_offset = -((77.0F - 63.5F) / 128.0F) * draw_size;
+    } else {
+      tex = icons.battery_charging;
+    }
+    tint = glm::vec4{0.52F, 1.0F, 0.62F, 0.95F * opacity};
+  } else if (percent < 10) {
+    tex = icons.battery_exclamation;
+    draw_size = status_icon_target_h * (128.0F / 91.0F);
+    y_offset = -((77.0F - 63.5F) / 128.0F) * draw_size;
+    tint = glm::vec4{1.0F, 0.42F, 0.42F, 0.95F * opacity};
+  } else if (percent <= 25) {
+    tex = icons.battery_1;
+  } else if (percent <= 50) {
+    tex = icons.battery_2;
+  } else if (percent <= 75) {
+    tex = icons.battery_3;
+  } else {
+    tex = icons.battery_4;
+  }
+  if (tex != nullptr && tex->loaded) {
+    draw_status_icon(renderer, layout, *tex, left_x + battery_slot_width * 0.5F,
+                     center_y + y_offset, draw_size, tint);
+    return;
+  }
+  // Vector fallback when textures are not bound (e.g. headless tests).
   const auto stroke = logical_hairline(layout) * 1.8F;
   const auto alpha = 0.92F * opacity;
   const auto outline = glm::vec4{1.0F, 1.0F, 1.0F, alpha};
   const auto top = center_y - battery_body_height * 0.5F;
-  draw_logical_rect(renderer, layout, left_x, top, battery_body_width, stroke,
-                    outline);
-  draw_logical_rect(renderer, layout, left_x,
-                    top + battery_body_height - stroke, battery_body_width,
-                    stroke, outline);
-  draw_logical_rect(renderer, layout, left_x, top, stroke, battery_body_height,
-                    outline);
-  draw_logical_rect(renderer, layout, left_x + battery_body_width - stroke,
-                    top, stroke, battery_body_height, outline);
-  draw_logical_rect(renderer, layout, left_x + battery_body_width,
-                    center_y - battery_nub_height * 0.5F, battery_nub_width,
-                    battery_nub_height, outline);
-
-  const auto inset = stroke * 1.75F;
-  const auto inner_width = battery_body_width - inset * 2.0F;
-  const auto inner_height = battery_body_height - inset * 2.0F;
-  const auto level = static_cast<float>(std::clamp(percent, 0, 100)) / 100.0F;
-  if (level <= 0.0F) {
-    return;
-  }
-  // The charge level uses the one accent material; charging keeps its green
-  // so it still reads at a glance.
-  const auto accent = glm::vec4{
-      glass::srgb_to_linear(glass::accent_srgb[0]),
-      glass::srgb_to_linear(glass::accent_srgb[1]),
-      glass::srgb_to_linear(glass::accent_srgb[2]), alpha};
-  const auto fill = charging ? glm::vec4{0.52F, 1.0F, 0.62F, alpha}
-                             : accent;
-  draw_logical_rect(renderer, layout, left_x + inset, top + inset,
-                    std::max(stroke, inner_width * level), inner_height,
-                    fill);
+  draw_logical_rect(renderer, layout, left_x, top, battery_body_width, stroke, outline);
+  draw_logical_rect(renderer, layout, left_x, top + battery_body_height - stroke, battery_body_width, stroke, outline);
+  draw_logical_rect(renderer, layout, left_x, top, stroke, battery_body_height, outline);
+  draw_logical_rect(renderer, layout, left_x + battery_body_width - stroke, top, stroke, battery_body_height, outline);
+  draw_logical_rect(renderer, layout, left_x + battery_body_width, center_y - battery_nub_height * 0.5F, battery_nub_width, battery_nub_height, outline);
 }
 
-// Bottom dot and three concentric arcs, lit from the inside out in proportion
-// to link quality; a present but unassociated interface keeps them dim instead
-// of hiding the indicator.
 void draw_wifi_indicator(auroreengine::gui_renderer &renderer,
-                         const ContainedLayout &layout, float left_x,
-                         float center_y, int signal, float opacity) {
+                         const ContainedLayout &layout,
+                         const StatusBarIcons &icons, float left_x,
+                         float center_y, int signal, bool no_internet,
+                         float opacity) {
+  const auroreengine::texture *tex = nullptr;
+  glm::vec4 tint{1.0F, 1.0F, 1.0F, 0.94F * opacity};
+  float draw_size = status_icon_target_h * (128.0F / 76.0F);
+  if (signal <= 0) {
+    tex = icons.wifi_0;
+    tint = glm::vec4{1.0F, 1.0F, 1.0F, 0.35F * opacity};
+  } else if (no_internet) {
+    tex = icons.wifi_off;
+    draw_size = status_icon_target_h * (128.0F / 108.0F);
+    tint = glm::vec4{1.0F, 1.0F, 1.0F, 0.88F * opacity};
+  } else if (signal >= 75) {
+    tex = icons.wifi;
+  } else if (signal >= 50) {
+    tex = icons.wifi_2;
+  } else if (signal >= 25) {
+    tex = icons.wifi_1;
+  } else {
+    tex = icons.wifi_0;
+  }
+  if (tex != nullptr && tex->loaded) {
+    draw_status_icon(renderer, layout, *tex, left_x + wifi_slot_width * 0.5F,
+                     center_y, draw_size, tint);
+    return;
+  }
   const auto stroke = logical_hairline(layout) * 1.8F;
   const auto lit = signal <= 0    ? 0
                    : signal >= 70 ? 3
                    : signal >= 40 ? 2
                                   : 1;
-  const auto lit_color = glm::vec4{
-      glass::srgb_to_linear(glass::accent_srgb[0]),
-      glass::srgb_to_linear(glass::accent_srgb[1]),
-      glass::srgb_to_linear(glass::accent_srgb[2]), 0.95F * opacity};
+  const auto lit_color = glm::vec4{1.0F, 1.0F, 1.0F, 0.94F * opacity};
   const auto dim_color = glm::vec4{1.0F, 1.0F, 1.0F, 0.28F * opacity};
-
-  const auto total_height =
-      wifi_arc_radii.back() + stroke * 0.5F + wifi_dot_radius;
+  const auto total_height = wifi_arc_radii.back() + stroke * 0.5F + wifi_dot_radius;
   const auto center_x = left_x + wifi_indicator_width * 0.5F;
   const auto origin_y = center_y + total_height * 0.5F - wifi_dot_radius;
-
-  draw_filled_disc(renderer, layout, center_x, origin_y, wifi_dot_radius,
-                   lit > 0 ? lit_color : dim_color);
+  draw_filled_disc(renderer, layout, center_x, origin_y, wifi_dot_radius, lit > 0 ? lit_color : dim_color);
   for (std::size_t index = 0; index < wifi_arc_radii.size(); ++index) {
-    const auto color =
-        static_cast<int>(index) < lit ? lit_color : dim_color;
     draw_wifi_arc(renderer, layout, center_x, origin_y, wifi_arc_radii[index],
-                  stroke, color);
+                  stroke, static_cast<int>(index) < lit ? lit_color : dim_color);
   }
 }
 
@@ -616,22 +783,29 @@ void draw_segment(auroreengine::gui_renderer &renderer,
             std::hypot(dx, dy), width, color);
 }
 
-// Both radio glyphs use the same hairline as the clock, so the capsule reads
-// as one set of instruments rather than three different icon styles.
 void draw_bluetooth_indicator(auroreengine::gui_renderer &renderer,
-                              const ContainedLayout &layout, float left_x,
-                              float center_y, float opacity) {
+                              const ContainedLayout &layout,
+                              const StatusBarIcons &icons, float left_x,
+                              float slot_width, float center_y, bool connected,
+                              float opacity) {
+  const auto color = glm::vec4{1.0F, 1.0F, 1.0F, 0.94F * opacity};
+  const auto *tex = connected ? icons.bluetooth_connected : icons.bluetooth;
+  if (tex != nullptr && tex->loaded) {
+    const float draw_size = status_icon_target_h * (128.0F / 96.0F);
+    draw_status_icon(renderer, layout, *tex, left_x + slot_width * 0.5F,
+                     center_y, draw_size, color);
+    return;
+  }
   const auto stroke = logical_hairline(layout) * 1.8F;
-  const auto color = glm::vec4{1.0F, 1.0F, 1.0F, 0.92F * opacity};
-  const auto cx = left_x + 5.0F;
+  const auto cx = left_x + slot_width * 0.5F;
   const auto top = center_y - 7.0F;
   const auto bottom = center_y + 7.0F;
   draw_logical_rect(renderer, layout, cx - stroke * 0.5F, top, stroke,
                     bottom - top, color);
-  draw_segment(renderer, layout, cx, center_y, cx + 4.5F, center_y - 3.5F,
-               stroke, color);
-  draw_segment(renderer, layout, cx, center_y, cx + 4.5F, center_y + 3.5F,
-               stroke, color);
+  draw_segment(renderer, layout, cx - 4.5F, center_y - 3.5F, cx + 4.5F,
+               center_y + 3.5F, stroke, color);
+  draw_segment(renderer, layout, cx - 4.5F, center_y + 3.5F, cx + 4.5F,
+               center_y - 3.5F, stroke, color);
   draw_segment(renderer, layout, cx + 4.5F, center_y - 3.5F, cx, top, stroke,
                color);
   draw_segment(renderer, layout, cx + 4.5F, center_y + 3.5F, cx, bottom,
@@ -639,11 +813,20 @@ void draw_bluetooth_indicator(auroreengine::gui_renderer &renderer,
 }
 
 void draw_aeroplane_indicator(auroreengine::gui_renderer &renderer,
-                              const ContainedLayout &layout, float left_x,
-                              float center_y, float opacity) {
+                              const ContainedLayout &layout,
+                              const StatusBarIcons &icons, float left_x,
+                              float slot_width, float center_y,
+                              float opacity) {
+  const auto color = glm::vec4{1.0F, 1.0F, 1.0F, 0.94F * opacity};
+  if (icons.aeroplane != nullptr && icons.aeroplane->loaded) {
+    const float draw_size = status_icon_target_h * (128.0F / 108.0F);
+    draw_status_icon(renderer, layout, *icons.aeroplane,
+                     left_x + slot_width * 0.5F, center_y,
+                     draw_size, color);
+    return;
+  }
   const auto stroke = logical_hairline(layout) * 1.8F;
-  const auto color = glm::vec4{1.0F, 1.0F, 1.0F, 0.92F * opacity};
-  const auto cx = left_x + 6.0F;
+  const auto cx = left_x + slot_width * 0.5F;
   draw_segment(renderer, layout, cx - 5.0F, center_y + 5.0F,
                cx + 5.0F, center_y - 5.0F, stroke, color);
   draw_segment(renderer, layout, cx - 3.5F, center_y - 1.0F,
@@ -683,90 +866,84 @@ void StatusBarRenderer::render(auroreengine::gui_renderer &renderer,
       renderer.text_line_metrics_pixels(text_px) / scale_guard;
   const auto logical_text_h = metrics.x + metrics.y;
   const auto frame_height = logical_text_h + 16.0F;
-  const auto icon_radius = 10.5F;
+  const auto icon_radius = 11.0F;
   const auto icon_scale = icon_radius / StatusBarMetrics::icon_radius;
   // A glass capsule floating in from the top-right corner of the screen.
   const auto visible_top = layout.offset_y < 0.0F ? -layout.offset_y / layout.scale : 0.0F;
   const auto frame_y = StatusBarMetrics::frame_top(visible_top);
   const auto icon_center_y = frame_y + frame_height * 0.5F;
-  const auto end_pad = StatusBarMetrics::frame_radius(frame_height) * 0.8F;
+  const auto end_pad = std::max(StatusBarMetrics::frame_radius(frame_height) * 0.85F, 22.0F);
 
-  const auto icon_center_x =
-      StatusBarMetrics::frame_right() - end_pad - icon_radius;
-  const auto text_right_x = status.analog_clock
-                                ? (icon_center_x - icon_radius - 10.0F)
-                                : (StatusBarMetrics::frame_right() - end_pad);
-  const auto text_left_x = text_right_x - text_w_logical;
-
-  // The indicators grow the glass frame leftwards from the date/time; a value
-  // that is unknown is dropped from the row instead of leaving a gap.
-  std::string battery_text;
-  auto battery_text_width = 0.0F;
-  if (status.battery_percent >= 0) {
-    battery_text = std::to_string(std::clamp(status.battery_percent, 0, 100));
-    battery_text += status.charging ? "%+" : "%";
-    battery_text_width =
-        renderer.text_width_pixels(battery_text, text_px) / scale_guard;
-  }
-  const auto battery_present = !battery_text.empty();
-  // In aeroplane mode the radios are blocked: show one plane instead of a
-  // Wi-Fi glyph with no signal, and no Bluetooth glyph.
+  const auto battery_present = status.battery_percent >= 0;
+  // In aeroplane mode the radios are blocked: show one plane at the first
+  // radio slot instead of Wi-Fi or Bluetooth.
   const auto plane_present = status.aeroplane_on;
   const auto wifi_present = !plane_present && status.wifi_signal >= 0;
   const auto bluetooth_present = !plane_present && status.bluetooth_on;
-  constexpr float radio_indicator_width = 12.0F;
+  const auto bluetooth_width = status.bluetooth_connected
+                                   ? bluetooth_connected_indicator_width
+                                   : bluetooth_indicator_width;
+  const auto clock_gap = 10.0F;
+  const auto clock_width = text_w_logical +
+      (status.analog_clock ? (clock_gap + icon_radius * 2.0F) : 0.0F);
 
-  auto cursor_x = text_left_x;
-  auto plane_left = cursor_x;
-  auto bluetooth_left = cursor_x;
-  auto wifi_left = cursor_x;
-  if (plane_present) {
-    plane_left = cursor_x - indicator_gap - radio_indicator_width;
-    cursor_x = plane_left;
-  } else {
-    if (bluetooth_present) {
-      bluetooth_left = cursor_x - indicator_gap - radio_indicator_width;
-      cursor_x = bluetooth_left;
-    }
-    if (wifi_present) {
-      wifi_left = cursor_x - indicator_gap - wifi_indicator_width;
-      cursor_x = wifi_left;
+  enum class DrawSlot { battery, wifi, bluetooth, plane, clock };
+  struct SlotLayout {
+    DrawSlot kind;
+    float width{};
+    float left{};
+  };
+  std::array<SlotLayout, 4> slots{};
+  std::size_t slot_count = 0;
+  bool plane_added = false;
+  for (const auto element : status.element_order) {
+    switch (element) {
+      case StatusBarElement::battery:
+        if (battery_present) {
+          slots[slot_count++] = {DrawSlot::battery, battery_slot_width, 0.0F};
+        }
+        break;
+      case StatusBarElement::wifi:
+        if (plane_present && !plane_added) {
+          slots[slot_count++] = {DrawSlot::plane, plane_indicator_width, 0.0F};
+          plane_added = true;
+        } else if (wifi_present) {
+          slots[slot_count++] = {DrawSlot::wifi, wifi_slot_width, 0.0F};
+        }
+        break;
+      case StatusBarElement::bluetooth:
+        if (plane_present && !plane_added) {
+          slots[slot_count++] = {DrawSlot::plane, plane_indicator_width, 0.0F};
+          plane_added = true;
+        } else if (bluetooth_present) {
+          slots[slot_count++] = {DrawSlot::bluetooth, bluetooth_width, 0.0F};
+        }
+        break;
+      case StatusBarElement::clock:
+        slots[slot_count++] = {DrawSlot::clock, clock_width, 0.0F};
+        break;
     }
   }
-  auto battery_left = cursor_x;
-  auto battery_text_left = cursor_x;
-  if (battery_present) {
-    battery_left = cursor_x - indicator_gap - battery_body_width -
-                   battery_nub_width - battery_text_gap - battery_text_width;
-    battery_text_left = battery_left + battery_body_width +
-                        battery_nub_width + battery_text_gap;
-    cursor_x = battery_left;
+
+  float content_w = 0.0F;
+  for (std::size_t i = 0; i < slot_count; ++i) {
+    if (i > 0) content_w += indicator_gap;
+    content_w += slots[i].width;
   }
 
-  const auto frame_x = std::max(0.0F, cursor_x - end_pad);
+  const auto frame_x = std::max(
+      0.0F, StatusBarMetrics::frame_right() - end_pad - content_w - end_pad);
   const auto frame_w = StatusBarMetrics::frame_right() - frame_x;
+  float cursor_x = frame_x + end_pad;
+  for (std::size_t i = 0; i < slot_count; ++i) {
+    slots[i].left = cursor_x;
+    cursor_x += slots[i].width + indicator_gap;
+  }
+
   openxmb::xmb::glass::draw_glass_px<auroreengine::glass_panel_params, auroreengine::simple_params>(
       renderer, layout.offset_x + frame_x * layout.scale, layout.offset_y + frame_y * layout.scale,
       frame_w * layout.scale, frame_height * layout.scale, openxmb::xmb::glass::variant::regular,
       StatusBarMetrics::frame_radius(frame_height) * layout.scale, opacity, layout.scale);
-
-  if (plane_present) {
-    draw_aeroplane_indicator(renderer, layout, plane_left, icon_center_y,
-                             opacity);
-  } else {
-    if (bluetooth_present) {
-      draw_bluetooth_indicator(renderer, layout, bluetooth_left,
-                               icon_center_y, opacity);
-    }
-    if (wifi_present) {
-      draw_wifi_indicator(renderer, layout, wifi_left, icon_center_y,
-                          status.wifi_signal, opacity);
-    }
-  }
-  if (battery_present) {
-    draw_battery_indicator(renderer, layout, battery_left, icon_center_y,
-                           status.battery_percent, status.charging, opacity);
-  }
 
   const auto baseline_logical =
       frame_y + (frame_height - logical_text_h) * 0.5F + metrics.x;
@@ -778,22 +955,44 @@ void StatusBarRenderer::render(auroreengine::gui_renderer &renderer,
     renderer.draw_text_pixels(text, x, text_px_y, text_px,
                               {1.0F, 1.0F, 1.0F, 1.0F * opacity}, 0.7F);
   };
-  if (battery_present) {
-    draw_label(battery_text, battery_text_left);
-  }
-  draw_label(time_text, text_left_x);
 
-  if (status.analog_clock) {
-    const auto angles = resolve_clock_hand_angles(time);
-    draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
-                    icon_radius, 0.0F, 2.0F * icon_scale, 2.6F * icon_scale,
-                    4.0F * icon_scale, {0.0F, 0.0F, 0.0F, 0.55F * opacity});
-    draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
-                    icon_radius, 0.0F, 0.0F, 5.2F * icon_scale,
-                    6.2F * icon_scale, {1.0F, 1.0F, 1.0F, 0.14F * opacity});
-    draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
-                    icon_radius, 0.0F, 0.0F, 2.6F * icon_scale,
-                    4.0F * icon_scale, {1.0F, 1.0F, 1.0F, 0.96F * opacity});
+  for (std::size_t i = 0; i < slot_count; ++i) {
+    const auto &slot = slots[i];
+    switch (slot.kind) {
+      case DrawSlot::battery:
+        draw_battery_indicator(renderer, layout, icons_, slot.left, icon_center_y,
+                               status.battery_percent, status.charging, opacity);
+        break;
+      case DrawSlot::wifi:
+        draw_wifi_indicator(renderer, layout, icons_, slot.left, icon_center_y,
+                            status.wifi_signal, status.wifi_no_internet, opacity);
+        break;
+      case DrawSlot::bluetooth:
+        draw_bluetooth_indicator(renderer, layout, icons_, slot.left,
+                                 bluetooth_width, icon_center_y,
+                                 status.bluetooth_connected, opacity);
+        break;
+      case DrawSlot::plane:
+        draw_aeroplane_indicator(renderer, layout, icons_, slot.left,
+                                 plane_indicator_width, icon_center_y, opacity);
+        break;
+      case DrawSlot::clock:
+        draw_label(time_text, slot.left);
+        if (status.analog_clock) {
+          const auto icon_center_x = slot.left + text_w_logical + clock_gap + icon_radius;
+          const auto angles = resolve_clock_hand_angles(time);
+          draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
+                          icon_radius, 0.0F, 2.0F * icon_scale, 2.6F * icon_scale,
+                          4.0F * icon_scale, {0.0F, 0.0F, 0.0F, 0.55F * opacity});
+          draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
+                          icon_radius, 0.0F, 0.0F, 5.2F * icon_scale,
+                          6.2F * icon_scale, {1.0F, 1.0F, 1.0F, 0.14F * opacity});
+          draw_clock_face(renderer, layout, angles, icon_center_x, icon_center_y,
+                          icon_radius, 0.0F, 0.0F, 2.6F * icon_scale,
+                          4.0F * icon_scale, {1.0F, 1.0F, 1.0F, 0.96F * opacity});
+        }
+        break;
+    }
   }
 }
 
@@ -819,6 +1018,8 @@ bool StatusBarRenderer::render_local(
   std::array<char,64> formatted{};std::strftime(formatted.data(),formatted.size(),format.c_str(),&tm);
   auto status = polled_status_bar_status();
   status.analog_clock = config::CONFIG.enabled("status.analog.clock", false);
+  status.element_order = openxmb::xmb::parse_status_bar_order(
+      config::CONFIG.preference("status.bar.order"));
   render(renderer, *local, opacity, formatted.data(), status);
   return true;
 }

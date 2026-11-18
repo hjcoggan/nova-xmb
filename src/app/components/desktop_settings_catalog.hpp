@@ -20,6 +20,8 @@ inline const std::vector<Entry>& entries() {
         {"Display","display.screen.brightness","Screen Brightness","Hardware panel backlight level.",{"10","20","30","40","50","60","70","80","90","100"}},
         {"Display","debug.fps","Show FPS","Display the shell frame rate.",{"Off","On"}},
         {"Display","status.analog.clock","Analog Clock","Show an analog face in the status bar.",{"Off","On"}},
+        {"Display","display.status.bar.order","Rearrange Status Bar","Choose the order of items in the status bar."},
+        {"Display","display.refresh.rate","In-Game Refresh Rate","Refresh rate applied when launching games."},
         {"Sound","audio.master","Volume","System audio output volume.",{"0","10","20","30","40","50","60","70","80","90","100"}},
         {"Sound","audio.device","Audio Output Device","Select an available playback device."},
         {"Sound","audio.effects","Menu Sounds","Volume of navigation and confirmation sounds.",{"0","25","50","75","100"}},
@@ -36,6 +38,8 @@ inline const std::vector<Entry>& entries() {
         {"Power Save","power.reduced.motion","Reduced Motion","Reduce background movement and sparkles.",{"Off","On"}},
         {"System","language","Language","Preferred interface language.",openxmb::localization::shell_locale::language_values()},
         {"System","games.rescan","Rescan Game Library","Refresh the configured game library."},
+        {"System","games.sort","Sort Game Library","Sort all four game categories.",{"Alphabetically","Date Added"}},
+        {"System","games.hidden","Hidden Games","View and restore hidden games."},
     };
     return data;
 }

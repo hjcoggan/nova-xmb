@@ -41,7 +41,7 @@ inline constexpr float grid = ui::px(ui::space::xs);
 // White text holds 7:1 against a body no brighter than this (4.5:1, the
 // floor, looked washed out over bright paused games on the device).
 inline constexpr float max_body_luminance = 0.10F;
-// Focus and slider fill only.
+// Focus and slider fill fallback (overridden at runtime by the active theme).
 inline constexpr std::array<float, 3> accent_srgb{10.0F, 132.0F, 255.0F};
 inline constexpr float text_primary = 1.0F;
 inline constexpr float text_secondary = 0.70F;
@@ -56,12 +56,66 @@ inline constexpr float panel_start_scale = 0.96F;
   return v <= 0.04045F ? v / 12.92F : std::pow((v + 0.055F) / 1.055F, 2.4F);
 }
 
+namespace detail {
+inline std::array<float, 3> active_base_linear{};
+inline std::array<float, 3> active_accent_linear_rgb{};
+inline bool theme_override_active = false;
+}  // namespace detail
+
+inline void set_theme_colors(std::array<float, 3> base_srgb_unit,
+                             std::array<float, 3> accent_srgb_unit) noexcept {
+  detail::active_base_linear = {
+      srgb_to_linear(std::clamp(base_srgb_unit[0], 0.0F, 1.0F) * 255.0F),
+      srgb_to_linear(std::clamp(base_srgb_unit[1], 0.0F, 1.0F) * 255.0F),
+      srgb_to_linear(std::clamp(base_srgb_unit[2], 0.0F, 1.0F) * 255.0F),
+  };
+  detail::active_accent_linear_rgb = {
+      srgb_to_linear(std::clamp(accent_srgb_unit[0], 0.0F, 1.0F) * 255.0F),
+      srgb_to_linear(std::clamp(accent_srgb_unit[1], 0.0F, 1.0F) * 255.0F),
+      srgb_to_linear(std::clamp(accent_srgb_unit[2], 0.0F, 1.0F) * 255.0F),
+  };
+  detail::theme_override_active = true;
+}
+
+inline void clear_theme_colors() noexcept {
+  detail::theme_override_active = false;
+}
+
+[[nodiscard]] inline std::array<float, 3> active_accent_linear() noexcept {
+  if (detail::theme_override_active) {
+    return detail::active_accent_linear_rgb;
+  }
+  return {srgb_to_linear(accent_srgb[0]), srgb_to_linear(accent_srgb[1]),
+          srgb_to_linear(accent_srgb[2])};
+}
+
+[[nodiscard]] inline std::array<float, 4> active_theme_tint_linear() noexcept {
+  if (!detail::theme_override_active) {
+    return {0.0F, 0.0F, 0.0F, 0.0F};
+  }
+  return {detail::active_base_linear[0], detail::active_base_linear[1],
+          detail::active_base_linear[2], 0.85F};
+}
+
 // The rim light of a variant, linear RGBA: one white rim for every pane of
 // glass, the accent for focus.
 [[nodiscard]] inline std::array<float, 4> rim_for(variant v) noexcept {
   if (v == variant::focus)
     return {srgb_to_linear(accent_srgb[0]), srgb_to_linear(accent_srgb[1]), srgb_to_linear(accent_srgb[2]), 0.9F};
   return {1.0F, 1.0F, 1.0F, 0.55F};
+}
+
+[[nodiscard]] inline std::array<float, 4> draw_rim_for(variant v) noexcept {
+  if (v == variant::focus && detail::theme_override_active) {
+    const auto accent = detail::active_accent_linear_rgb;
+    return {
+        0.75F + 0.25F * accent[0],
+        0.75F + 0.25F * accent[1],
+        0.75F + 0.25F * accent[2],
+        0.72F,
+    };
+  }
+  return rim_for(v);
 }
 
 [[nodiscard]] constexpr float concentric_radius(float outer, float inset) noexcept {

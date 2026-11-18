@@ -38,10 +38,16 @@ int main(int argc,char** argv) try {
         require(!node.action_id.starts_with("simulate."),"desktop row never simulates successful config writes");
     }
     const auto& display=catalog.nodes.at("category.settings.desktop.Display").children;
-    require(display.size()==3,"console Display has only the rows a handheld needs");
+    require(display.size()==5,"console Display has only the rows a handheld needs");
     require(display[0]=="category.settings.desktop.display.screen.brightness","Display opens on Screen Brightness");
     require(display[1]=="category.settings.desktop.debug.fps","Show FPS second");
     require(display[2]=="category.settings.desktop.status.analog.clock","Analog Clock third");
+    require(display[3]=="category.settings.desktop.display.status.bar.order","Rearrange Status Bar fourth");
+    require(display[4]=="category.settings.desktop.display.refresh.rate","In-Game Refresh Rate fifth");
+    const auto& system=catalog.nodes.at("category.settings.desktop.System").children;
+    require(system.size()==4,"console System exposes Language, Rescan, Sort and Hidden Games");
+    require(system[2]=="category.settings.desktop.games.sort","Sort Game Library third under System");
+    require(system[3]=="category.settings.desktop.games.hidden","Hidden Games fourth under System");
     const auto& sound=catalog.nodes.at("category.settings.desktop.Sound").children;
     require(!sound.empty()&&sound[0]=="category.settings.desktop.audio.master","Sound opens on Volume");
     std::cout<<"desktop_settings_tests: retained assets, live tree and parent navigation passed\n";

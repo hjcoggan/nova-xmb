@@ -109,7 +109,8 @@ class main_menu : public action_receiver {
         void seed_settings_dialog_values();
         void apply_initial_settings_route();
         void render_settings_parent_layer(auroreengine::gui_renderer& renderer);
-        void render_settings_scene(auroreengine::gui_renderer& renderer, time_point now);
+        void render_settings_scene(auroreengine::gui_renderer& renderer, time_point now,
+            double x_shift = 0.0, double alpha_multiplier = 1.0, bool is_current_column = true);
 
         std::vector<std::unique_ptr<menu::menu>> menus;
         int selected = 0;

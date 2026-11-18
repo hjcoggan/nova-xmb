@@ -1696,9 +1696,6 @@ void main_menu::render(auroreengine::gui_renderer& renderer) {
 
     if(settings_category_active()&&settings_catalog)for(const auto& [id,node]:settings_catalog->nodes)if(node.action_id.starts_with("desktop."))settings_value_labels[id]=desktop_settings::display_value(node.action_id.substr(8),xmb);
     render_crossbar(renderer, now);
-    if(settings_category_active()) {
-        render_settings_scene(renderer, now);
-    }
 
     std::vector<std::pair<action, std::string>> buttons{};
     buttons.reserve(5);
@@ -1729,8 +1726,9 @@ void main_menu::render(auroreengine::gui_renderer& renderer) {
     }
 }
 
-void main_menu::render_settings_scene(auroreengine::gui_renderer& renderer, time_point now) {
-    if(!settings_catalog || !settings_controller) {
+void main_menu::render_settings_scene(auroreengine::gui_renderer& renderer, time_point now,
+                                      double x_shift, double alpha_multiplier, bool is_current_column) {
+    if(!settings_catalog || !settings_controller || alpha_multiplier <= 0.001) {
         return;
     }
 
@@ -1755,9 +1753,15 @@ void main_menu::render_settings_scene(auroreengine::gui_renderer& renderer, time
         return;
     }
 
+    const double now_ms = std::chrono::duration<double, std::milli>(now.time_since_epoch()).count();
     const openxmb::xmb::SettingsSceneRenderOptions options{
         .glass_icons=config::CONFIG.iconGlassRefraction,
-        .suppress_value_labels=settings_choice_panel_open||xmb->has_choice_overlay()
+        .suppress_value_labels=settings_choice_panel_open||xmb->has_choice_overlay(),
+        .x_shift=x_shift,
+        .alpha_multiplier=alpha_multiplier,
+        .focus_lens=&lens_focus,
+        .now_ms=now_ms,
+        .is_current_column=is_current_column
     };
     if(transitioning) {
         const auto previous_input=openxmb::xmb::make_settings_scene_input(*settings_previous_route,
@@ -1998,9 +2002,15 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
     };
 
     const auto rail_alpha = std::max(0.0, 1.0 - chrome_transition);
-    if(settings_category_active()) {
-        return;
-    }
+    const auto render_column_rail = [&](int col_index, double shift, double alpha, bool is_current) {
+        if(col_index == settings_category_index && settings_catalog && settings_controller && !in_submenu) {
+            render_settings_scene(renderer, now, shift, alpha, is_current);
+            return;
+        }
+        const auto& col_menu = *menus[static_cast<std::size_t>(col_index)];
+        const auto col_selected = static_cast<int>(col_menu.get_selected_submenu());
+        render_item_rail(col_menu, col_selected, col_selected, 1.0, shift, alpha);
+    };
 
     if(selected != last_selected && category_linear < 1.0) {
         const auto travel = static_cast<double>(selected - last_selected) * category_spacing;
@@ -2009,15 +2019,10 @@ void main_menu::render_crossbar(auroreengine::gui_renderer& renderer, time_point
         const auto old_alpha = std::max(0.0, 1.0 - category_eased / 0.4) * rail_alpha;
         const auto new_alpha = std::max(0.0, (category_eased - 0.5) / 0.5) * rail_alpha;
 
-        const auto& old_menu = *menus[static_cast<std::size_t>(last_selected)];
-        const auto old_selected = static_cast<int>(old_menu.get_selected_submenu());
-        render_item_rail(old_menu, old_selected, old_selected, 1.0,
-            old_shift, old_alpha);
-
-        const auto& new_menu = *menus[static_cast<std::size_t>(selected)];
-        const auto new_selected = static_cast<int>(new_menu.get_selected_submenu());
-        render_item_rail(new_menu, new_selected, new_selected, 1.0,
-            new_shift, new_alpha);
+        render_column_rail(last_selected, old_shift, old_alpha, false);
+        render_column_rail(selected, new_shift, new_alpha, true);
+    } else if(settings_category_active()) {
+        render_settings_scene(renderer, now, 0.0, settings_chrome_collapsed() ? 1.0 : rail_alpha, true);
     } else {
         const auto& current = *menus[static_cast<std::size_t>(selected)];
         const auto selected_item = static_cast<int>(current.get_selected_submenu());

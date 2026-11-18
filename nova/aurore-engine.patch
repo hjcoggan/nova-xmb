@@ -23,7 +23,7 @@ index 804be6e..fa9a405 100644
  
  layout(location = 0) in vec2 vUV;
  
-@@ -49,6 +55,82 @@ vec4 glassIcon(vec2 uv) {
+@@ -49,6 +55,86 @@ vec4 glassIcon(vec2 uv) {
      return vec4(srgb_to_linear(result),1);
  }
  
@@ -63,11 +63,13 @@ index 804be6e..fa9a405 100644
 +    float rim = edge * (0.25 + 0.55 * light);
 +    float sheen = 0.025 * (1.0 - smoothstep(0.0, 0.45, vUV.y));
 +    float alpha = pc.color.a * coverage;
++    vec4 themeTint = vec4(float(pc.pad0 & 0xffu), float((pc.pad0 >> 8u) & 0xffu), float((pc.pad0 >> 16u) & 0xffu), float((pc.pad0 >> 24u) & 0xffu)) / 255.0;
 +    if(!samples) {
-+        // Focus: light added inside a card, no body of its own.
-+        vec3 lift = vec3(pc.material.z) + vec3(sheen * 0.5);
++        // Focus: light added inside a card, tinted by the active theme when set.
++        vec3 focusTint = mix(vec3(pc.material.z), max(themeTint.rgb, vec3(0.018)) * 0.22 + vec3(pc.material.z * 0.45), themeTint.a);
++        vec3 lift = focusTint + vec3(sheen * 0.5);
 +        vec3 light_rgb = lift + pc.color.rgb * rim;
-+        float a = clamp(max(pc.material.z, rim), 0.0, 1.0);
++        float a = clamp(max(pc.material.z * (1.0 + 0.35 * themeTint.a), rim), 0.0, 1.0);
 +        return vec4(light_rgb * alpha, a * alpha);
 +    }
 +    vec3 body;
@@ -93,10 +95,12 @@ index 804be6e..fa9a405 100644
 +        float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
 +        float tint = pc.material.z;
 +        float dim = clamp(1.0 - (0.10 - tint - sheen) / max(lum, 1e-4), 0.0, 1.0) * pc.material.w;
-+        body = c * (1.0 - dim) + vec3(tint);
++        vec3 tintGlow = mix(vec3(tint), themeTint.rgb * 0.08 + vec3(tint * 0.5), themeTint.a * 0.55);
++        body = c * (1.0 - dim) + tintGlow;
 +    } else {
 +        // No backdrop: an opaque body dark enough for the same contrast.
-+        body = srgb_to_linear(vec3(28.0, 32.0, 44.0) / 255.0);
++        vec3 fallback = srgb_to_linear(vec3(28.0, 32.0, 44.0) / 255.0);
++        body = mix(fallback, themeTint.rgb * 0.14 + vec3(0.015), themeTint.a);
 +    }
 +    body += vec3(sheen) + pc.color.rgb * rim;
 +    float bodyAlpha = hasBackdrop ? 1.0 : 0.92;
@@ -144,7 +148,7 @@ diff --git c/src/components/image_renderer.cppm i/src/components/image_renderer.
 index 6763463..0e226ca 100644
 --- c/src/components/image_renderer.cppm
 +++ i/src/components/image_renderer.cppm
-@@ -34,6 +34,26 @@ struct push_constants {
+@@ -34,6 +34,27 @@ struct push_constants {
      glm::vec4 color;
      unsigned int index;
      unsigned int encoding;
@@ -168,6 +172,7 @@ index 6763463..0e226ca 100644
 +    float tint{};
 +    float dim_strength{};
 +    bool samples_backdrop{true};
++    glm::vec4 tint_rgba{};
  };
  
  export class image_renderer {
@@ -259,7 +264,7 @@ index 6763463..0e226ca 100644
              glm::vec2 pos = glm::vec2(x, y)*2.0f - glm::vec2(1.0f);
              push_constants push{};
              push.matrix = glm::mat4(1.0f);
-@@ -339,6 +346,31 @@ export class image_renderer {
+@@ -339,6 +347,37 @@ export class image_renderer {
              cmd.draw(4, 1, 0, 0);
          }
  
@@ -281,6 +286,12 @@ index 6763463..0e226ca 100644
 +            // The rim's strength rides in its colour; alpha is the panel's.
 +            push.color = glm::vec4(glm::vec3(rim) * rim.a, params.alpha);
 +            push.encoding = outputEncoding;
++            auto pack_byte = [](float v) -> unsigned int {
++                const float clamped = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
++                return static_cast<unsigned int>(clamped * 255.0f + 0.5f);
++            };
++            push.pad0 = pack_byte(params.tint_rgba.r) | (pack_byte(params.tint_rgba.g) << 8) |
++                        (pack_byte(params.tint_rgba.b) << 16) | (pack_byte(params.tint_rgba.a) << 24);
 +            const float flags = (glassBackdropView ? 1.0f : 0.0f) + (params.samples_backdrop ? 2.0f : 0.0f);
 +            push.shape = glm::vec4(params.size_px, params.radius_px, flags);
 +            push.material = glm::vec4(params.refraction_px, params.blur_lod, params.tint, params.dim_strength);
@@ -291,7 +302,7 @@ index 6763463..0e226ca 100644
          void renderGlassFrame(vk::CommandBuffer cmd,int frame,vk::RenderPass pass,float x,float y,float width,float height,float opacity) {
              if(!glassBackgroundView) return;
              renderImageGlass(cmd,frame,pass,glassBackgroundView,x,y,width,height,{1,1,1,opacity},1);
-@@ -637,6 +669,37 @@ export class image_renderer {
+@@ -637,6 +678,37 @@ export class image_renderer {
  
          vk::Device device;
          vk::Extent2D frameSize;
@@ -329,7 +340,7 @@ index 6763463..0e226ca 100644
          double aspectRatio;
  
          const gpu_features& features;
-@@ -661,6 +724,9 @@ export class image_renderer {
+@@ -661,6 +730,9 @@ export class image_renderer {
          vk::ImageView glassAmbientView{};
          vk::ImageView glassEnvironmentView{};
          vk::ImageView glassBackgroundView{};

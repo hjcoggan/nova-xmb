@@ -499,6 +499,8 @@ endif()
 set(XMS_SOURCES
   src/app/shell.cpp
   src/app/components/choice_overlay.cpp
+  src/app/components/desktop_settings_posix.cpp
+  src/app/components/display_refresh.cpp
   src/app/components/launch_overlay.cpp
   src/app/components/main_menu.cpp
   src/app/components/message_overlay.cpp

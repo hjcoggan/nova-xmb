@@ -89,4 +89,26 @@ int main() {
           "authoritative clock icon measurements remain pinned");
   require(near(StatusBarMetrics::text_right_x, 1755.5F),
           "text ends at the measured icon gap");
+
+  const openxmb::xmb::StatusBarStatus defaults{};
+  require(!defaults.bluetooth_on && !defaults.bluetooth_connected &&
+              !defaults.aeroplane_on && !defaults.analog_clock &&
+              !defaults.wifi_no_internet &&
+              defaults.battery_percent == -1 && defaults.wifi_signal == -1,
+          "status bar radio and sensor fields default to hidden/disconnected");
+  require(defaults.element_order == openxmb::xmb::kDefaultStatusBarOrder,
+          "status bar starts in default element order");
+
+  using Elem = openxmb::xmb::StatusBarElement;
+  const auto reordered = openxmb::xmb::parse_status_bar_order("clock,bluetooth,wifi,battery");
+  require(reordered == std::array<Elem, 4>{Elem::clock, Elem::bluetooth, Elem::wifi, Elem::battery},
+          "parse_status_bar_order preserves custom permutations");
+  require(openxmb::xmb::format_status_bar_order(reordered) == "clock,bluetooth,wifi,battery",
+          "format_status_bar_order serializes round-trip order");
+
+  const auto deduplicated = openxmb::xmb::parse_status_bar_order("wifi,invalid,wifi,clock");
+  require(deduplicated == std::array<Elem, 4>{Elem::wifi, Elem::clock, Elem::battery, Elem::bluetooth},
+          "parse_status_bar_order drops duplicates and appends missing defaults");
+  require(openxmb::xmb::status_bar_element_label(Elem::wifi) == "Wi-Fi",
+          "element labels stay human readable");
 }

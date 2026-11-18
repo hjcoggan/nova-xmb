@@ -451,6 +451,7 @@ namespace app
             std::array<std::unique_ptr<texture>, std::to_underlying(action::_length)> buttonTextures;
             std::array<std::string,std::to_underlying(action::_length)> button_labels;
             std::unique_ptr<texture> cursorTexture;
+            std::array<std::unique_ptr<texture>, 15> statusIconTextures;
             std::unique_ptr<texture> iconGlassAmbientTexture;
             std::unique_ptr<texture> iconGlassEnvironmentTexture;
 
@@ -500,6 +501,7 @@ namespace app
             // transparent, so when Home floats it over the frozen game the first
             // thing on screen is the game, not a stale frame of the menu.
             bool game_has_screen = false;
+            bool in_game_refresh_active = false;
             std::chrono::steady_clock::time_point game_focus_returned{};
             std::chrono::steady_clock::time_point launch_started{};
 

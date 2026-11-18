@@ -315,6 +315,7 @@ std::optional<app_info> parse_game_manifest(const std::filesystem::path& manifes
     );
     app.categories = "Game;";
     app.desktop_file = manifest_path;
+    app.added_at = std::filesystem::last_write_time(manifest_path, ec);
     app.terminal = false;
     app.hidden = false;
     app.no_display = false;
@@ -381,6 +382,8 @@ app_info::app_info(const std::filesystem::path& desktop_file) {
     if (!std::filesystem::exists(desktop_file)) {
         return;
     }
+    std::error_code mtime_ec;
+    added_at = std::filesystem::last_write_time(desktop_file, mtime_ec);
     
     try {
         std::ifstream file(desktop_file);
@@ -537,15 +540,41 @@ bool console_desktop_entry(const app_info& app)
     return true;
 }
 
+std::vector<std::pair<std::string, std::string>> refresh_launch_env()
+{
+    const auto rate = config::CONFIG.preference("display.refresh.rate", "120 Hz");
+    if(rate == "VRR" || rate == "vrr") {
+        return {{"NOVA_REFRESH_RATE", "vrr"}};
+    }
+    std::string hz = "120";
+    if(rate.starts_with("30")) hz = "30";
+    else if(rate.starts_with("60")) hz = "60";
+    else if(rate.starts_with("90")) hz = "90";
+    else if(rate.starts_with("120")) hz = "120";
+    return {{"NOVA_REFRESH_RATE", hz}, {"DXVK_FRAME_RATE", hz}};
+}
+
 bool start_library_item(const app_info& app, app::shell* xmb)
 {
     auto args = build_launch_args(app);
-    if(args.empty() || !launch_detached(args)) {
+    if(args.empty()) {
         spdlog::warn("Failed to start {} ({})", app.name, app.exec);
         return false;
     }
+    const auto env = is_game_manifest(app)
+        ? refresh_launch_env()
+        : std::vector<std::pair<std::string, std::string>>{};
+    // Switch Sway panel refresh rate right before launching the game so it sees the
+    // target display mode on its initial surface configure.
     if(xmb != nullptr && is_game_manifest(app)) {
         xmb->begin_launch(app.name, app.icon);
+    }
+    if(!launch_detached(args, env)) {
+        if(xmb != nullptr && is_game_manifest(app)) {
+            xmb->end_launch();
+        }
+        spdlog::warn("Failed to start {} ({})", app.name, app.exec);
+        return false;
     }
     return true;
 }
@@ -586,15 +615,23 @@ std::unique_ptr<action_menu_entry> create_game_menu_entry(
                 return start_library_item(app, xmb) ? result::success : result::failure;
             }
             if(a == action::options && xmb != nullptr) {
+                const bool can_hide = is_game_manifest(app);
+                std::vector<std::string> options{"Start"_(), "Move"_()};
+                if(can_hide) options.push_back("Hide"_());
+                options.push_back("Information"_());
                 xmb->emplace_overlay<app::choice_overlay>(
-                    std::vector{"Start"_(), "Move"_(), "Information"_()},
+                    std::move(options),
                     0,
-                    [xmb, app](unsigned int index) {
+                    [xmb, app, can_hide](unsigned int index) {
                         if(index == 0) {
                             start_library_item(app, xmb);
                         } else if(index == 1) {
                             xmb->begin_library_move();
-                        } else if(index == 2) {
+                        } else if(can_hide && index == 2) {
+                            config::CONFIG.excludeApplication(app.id, true);
+                            config::CONFIG.save_config();
+                            xmb->reload_menu();
+                        } else {
                             xmb->emplace_overlay<app::message_overlay>(
                                 app.name,
                                 std::string("Runs as: ") + runtime_label(app) + "\n" +
@@ -620,6 +657,23 @@ std::unique_ptr<action_menu_entry> create_game_menu_entry(
         loader.loadTexture(&bg_slot, app.background);
     }
     return entry;
+}
+
+std::vector<app_info> scan_hidden_games()
+{
+    std::vector<app_info> items;
+    std::unordered_set<std::string> seen_ids;
+    for(auto& game : scan_game_manifests()) {
+        if(config::CONFIG.excludedApplications.contains(game.id) && seen_ids.insert(game.id).second) {
+            items.push_back(std::move(game));
+        }
+    }
+    return items;
+}
+
+bool launch_library_item(const app_info& app, app::shell* xmb)
+{
+    return start_library_item(app, xmb);
 }
 
 std::vector<app_info> scan_library()
@@ -678,7 +732,23 @@ library_menu::library_menu(std::string name, auroreengine::texture&& icon, std::
     app::shell* xmb, auroreengine::resource_loader& loader, std::vector<app_info> library_items)
     : simple_menu(std::move(name), std::move(icon)), column_id(std::move(column)), items(std::move(library_items))
 {
-    // The player's order first; anything new goes after it, by title.
+    const bool is_game_column =
+        column_id == "switch" || column_id == "windows" ||
+        column_id == "linux" || column_id == "android";
+    const auto sort_mode = config::CONFIG.preference("games.sort", "Alphabetically");
+    const bool sort_date_added = is_game_column && sort_mode == "Date Added";
+    auto alpha_less = [](const app_info& a, const app_info& b) {
+        const auto len = std::min(a.name.size(), b.name.size());
+        for(std::size_t i = 0; i < len; ++i) {
+            const auto ca = std::tolower(static_cast<unsigned char>(a.name[i]));
+            const auto cb = std::tolower(static_cast<unsigned char>(b.name[i]));
+            if(ca != cb) return ca < cb;
+        }
+        if(a.name.size() != b.name.size()) return a.name.size() < b.name.size();
+        return a.name < b.name;
+    };
+
+    // The player's moved order first; otherwise sorted by Date Added or Alphabetically.
     const auto order_it = config::CONFIG.libraryOrder.find(column_id);
     const auto rank = [&](const app_info& app) {
         if(order_it != config::CONFIG.libraryOrder.end()) {
@@ -691,7 +761,11 @@ library_menu::library_menu(std::string name, auroreengine::texture&& icon, std::
     };
     std::ranges::stable_sort(items, [&](const app_info& a, const app_info& b) {
         const auto ra = rank(a), rb = rank(b);
-        return ra != rb ? ra < rb : a.name < b.name;
+        if(ra != rb) return ra < rb;
+        if(sort_date_added && a.added_at != b.added_at) {
+            return a.added_at > b.added_at;
+        }
+        return alpha_less(a, b);
     });
     for(const auto& app : items) {
         entries.push_back(create_game_menu_entry(app, xmb, loader));
@@ -732,8 +806,19 @@ bool library_menu::move_selected(int delta)
 void library_menu::store_order() const
 {
     auto& order = config::CONFIG.libraryOrder[column_id];
+    const auto previous = order;
+    std::vector<std::pair<std::size_t, std::string>> hidden_slots;
+    for(std::size_t i = 0; i < previous.size(); ++i) {
+        if(config::CONFIG.excludedApplications.contains(previous[i])) {
+            hidden_slots.emplace_back(i, previous[i]);
+        }
+    }
     order.clear();
     for(const auto& app : items) order.push_back(app.id);
+    for(const auto& [slot, id] : hidden_slots) {
+        const auto pos = std::min(slot, order.size());
+        order.insert(order.begin() + static_cast<std::ptrdiff_t>(pos), id);
+    }
 }
 
 std::vector<app_info> applications_menu::scan_applications() {
